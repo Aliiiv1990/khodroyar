@@ -1,0 +1,6 @@
+{
+  "name": "سامانه نیازمندی‌های خودرو (آگهی و استعلام)",
+  "description": "پلتفرم فوق‌سریع و بهینه‌سازی‌شده برای ثبت، جستجو و استعلام ۵,۰۰۰ آگهی خودرو با مصرف حداقل رم و سازگار با گوشی‌های قدیمی",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
