@@ -15,7 +15,6 @@ import { buildSearchIndex } from './persianSearch';
 const USER_LISTINGS_COLLECTION = 'user_listings';
 const ADMIN_DATASET_DOC = 'admin_dataset/latest';
 const CHUNKS_COLLECTION = 'admin_dataset/latest/chunks';
-const CHUNK_SIZE = 150;
 
 /**
  * Subscribe to real-time car listings submitted by users & colleagues
@@ -100,6 +99,47 @@ export async function addListingToCloud(listing: CarListing): Promise<void> {
   }
 }
 
+const CHUNK_SIZE = 100;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, errorMsg: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(errorMsg)), ms)),
+  ]);
+}
+
+function sanitizeListingForCloudChunk(item: CarListing) {
+  return {
+    id: String(item.id || ''),
+    type: item.type === 'buy_request' ? 'buy_request' : 'sale',
+    title: String(item.title || item.model || ''),
+    brand: String(item.brand || ''),
+    model: String(item.model || ''),
+    year: Number(item.year) || 1402,
+    price: Number(item.price) || 0,
+    priceFormatted: String(item.priceFormatted || 'توافقی'),
+    mileage: Number(item.mileage) || 0,
+    mileageFormatted: String(item.mileageFormatted || 'صفر'),
+    color: String(item.color || 'سفید'),
+    gearbox: String(item.gearbox || 'دنده‌ای'),
+    bodyCondition: String(item.bodyCondition || 'بی‌رنگ'),
+    fuelType: String(item.fuelType || 'بنزین'),
+    city: String(item.city || 'تهران'),
+    phoneNumber: String(item.phoneNumber || ''),
+    description: String(item.description || '').slice(0, 1500),
+    fileDescription: String(item.fileDescription || '').slice(0, 1500),
+    isTextOnly: Boolean(item.isTextOnly),
+    createdAt: item.createdAt || new Date().toISOString(),
+    source: 'admin' as const,
+    creatorName: String(item.creatorName || ''),
+    // Only keep compact thumbnails (< 25KB) to guarantee chunk stays far below Firestore 1MB document limit
+    imageThumbnailBase64:
+      item.imageThumbnailBase64 && item.imageThumbnailBase64.length < 25000
+        ? item.imageThumbnailBase64
+        : '',
+  };
+}
+
 /**
  * Admin publishes the daily dataset archive to cloud for all visitors
  */
@@ -108,26 +148,32 @@ export async function publishAdminDatasetToCloud(
   onProgress?: (percent: number, currentChunk: number, totalChunks: number) => void
 ): Promise<void> {
   const total = listings.length;
-  const chunkCount = Math.ceil(total / CHUNK_SIZE);
+  if (total === 0) return;
 
-  // 1. Write chunks
+  const chunkCount = Math.ceil(total / CHUNK_SIZE);
+  if (onProgress) onProgress(1, 0, chunkCount);
+
+  // 1. Write chunks in batches
   for (let i = 0; i < chunkCount; i++) {
-    const chunkItems = listings.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE).map((item) => ({
-      ...item,
-      source: 'admin',
-    }));
+    const rawChunk = listings.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+    const chunkItems = rawChunk.map(sanitizeListingForCloudChunk);
+
     const chunkDoc = doc(db, 'admin_dataset', 'latest', 'chunks', `chunk_${i}`);
     try {
-      await setDoc(chunkDoc, {
-        chunkIndex: i,
-        listings: chunkItems,
-      });
-    } catch (err) {
+      await withTimeout(
+        setDoc(chunkDoc, {
+          chunkIndex: i,
+          listings: chunkItems,
+        }),
+        20000,
+        `مهلت ارسال بسته ${i + 1} از ${chunkCount} به پایان رسید. لطفاً وضعیت اینترنت یا فیلترشکن را بررسی کنید.`
+      );
+    } catch (err: any) {
       handleFirestoreError(err, OperationType.WRITE, `admin_dataset/latest/chunks/chunk_${i}`);
     }
 
     if (onProgress) {
-      const percent = Math.round(((i + 1) / chunkCount) * 95);
+      const percent = Math.min(95, Math.round(((i + 1) / chunkCount) * 95));
       onProgress(percent, i + 1, chunkCount);
     }
   }
@@ -135,15 +181,19 @@ export async function publishAdminDatasetToCloud(
   // 2. Write metadata doc
   const metaDoc = doc(db, 'admin_dataset', 'latest');
   try {
-    await setDoc(metaDoc, {
-      id: 'latest',
-      totalCount: total,
-      chunkCount,
-      publishedAt: new Date().toISOString(),
-      publishedBy: 'مدیر سیستم',
-      title: 'بانک اطلاعات روزانه خودروها',
-    });
-  } catch (err) {
+    await withTimeout(
+      setDoc(metaDoc, {
+        id: 'latest',
+        totalCount: total,
+        chunkCount,
+        publishedAt: new Date().toISOString(),
+        publishedBy: 'مدیر سیستم',
+        title: 'بانک اطلاعات روزانه خودروها',
+      }),
+      15000,
+      'مهلت ثبت فراداده پایانی به پایان رسید.'
+    );
+  } catch (err: any) {
     handleFirestoreError(err, OperationType.WRITE, ADMIN_DATASET_DOC);
   }
 
@@ -160,7 +210,12 @@ export async function fetchAdminDatasetFromCloud(
 ): Promise<CarListing[] | null> {
   try {
     const metaDoc = doc(db, 'admin_dataset', 'latest');
-    const metaSnap = await getDoc(metaDoc);
+    const metaSnap = await withTimeout(
+      getDoc(metaDoc),
+      15000,
+      'پایان مهلت بررسی اطلاعات ابر. لطفاً اتصال اینترنت یا فیلترشکن را بررسی نمایید.'
+    );
+
     if (!metaSnap.exists()) {
       return null;
     }
@@ -171,7 +226,11 @@ export async function fetchAdminDatasetFromCloud(
 
     const allListings: CarListing[] = [];
     const chunksCol = collection(db, 'admin_dataset', 'latest', 'chunks');
-    const chunksSnap = await getDocs(chunksCol);
+    const chunksSnap = await withTimeout(
+      getDocs(chunksCol),
+      25000,
+      'پایان مهلت بارگیری بسته‌های اطلاعاتی از سرور ابری.'
+    );
 
     const sortedDocs = chunksSnap.docs.sort((a, b) => {
       const idxA = a.data().chunkIndex ?? 0;
@@ -200,6 +259,6 @@ export async function fetchAdminDatasetFromCloud(
     return allListings;
   } catch (err) {
     console.warn('Could not fetch admin dataset from cloud:', err);
-    return null;
+    throw err;
   }
 }

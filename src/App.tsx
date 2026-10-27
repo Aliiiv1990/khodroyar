@@ -150,13 +150,17 @@ export default function App() {
             setListings(prunedListings);
           } else {
             // Check if there is an admin dataset already published in cloud
-            const cloudAdmin = await fetchAdminDatasetFromCloud();
-            if (cloudAdmin && cloudAdmin.length > 0 && isMounted) {
-              const { prunedListings } = pruneOldListings(cloudAdmin);
-              setListings(prunedListings);
-              markUserVisited();
-              saveListingsToIndexedDB(prunedListings);
-              return;
+            try {
+              const cloudAdmin = await fetchAdminDatasetFromCloud();
+              if (cloudAdmin && cloudAdmin.length > 0 && isMounted) {
+                const { prunedListings } = pruneOldListings(cloudAdmin);
+                setListings(prunedListings);
+                markUserVisited();
+                saveListingsToIndexedDB(prunedListings);
+                return;
+              }
+            } catch {
+              // Cloud fetch not available or no published admin data yet
             }
 
             if (!hasUserVisitedBefore() && isMounted) {

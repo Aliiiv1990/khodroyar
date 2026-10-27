@@ -6,6 +6,7 @@ import { parseZipArchive, parseSessionJson, parseCarCsv, SessionJsonRoot } from 
 import { parseSellersJson } from '../utils/sellerDataParser';
 import { clearIndexedDBListings, saveListingsToIndexedDB, setStorageExplicitlyCleared } from '../utils/storage';
 import { publishAdminDatasetToCloud, fetchAdminDatasetFromCloud } from '../utils/cloudSync';
+import { checkCloudConnection } from '../lib/firebase';
 import {
   X,
   Database,
@@ -144,9 +145,28 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
   const [isPublishingCloud, setIsPublishingCloud] = useState(false);
   const [publishProgress, setPublishProgress] = useState(0);
   const [isFetchingCloud, setIsFetchingCloud] = useState(false);
+  const [isCheckingConn, setIsCheckingConn] = useState(false);
+  const [connResult, setConnResult] = useState<{ ok: boolean; message: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
+
+  // Manual Cloud Connectivity Tester
+  const handleTestCloudConnection = async () => {
+    setIsCheckingConn(true);
+    setConnResult(null);
+    try {
+      const res = await checkCloudConnection(9000);
+      setConnResult(res);
+      setImportStatus(res.message);
+      setIsSuccess(res.ok);
+    } catch (e: any) {
+      setConnResult({ ok: false, message: e.message || 'خطا در ارتباط با سرور فایربیس' });
+      setIsSuccess(false);
+    } finally {
+      setIsCheckingConn(false);
+    }
+  };
 
   // Cloud Publish handler (Admin uploads daily data for all users)
   const handlePublishToCloud = async () => {
@@ -158,18 +178,24 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
 
     setIsPublishingCloud(true);
     setPublishProgress(0);
-    setImportStatus('در حال آماده‌سازی و ارسال بسته‌های اطلاعاتی به پایگاه داده ابری (Firestore)...');
+    setImportStatus('در حال اتصال به سرور ابری و ارسال بسته‌های اطلاعاتی (Firestore)...');
 
     try {
-      await publishAdminDatasetToCloud(listings, (percent) => {
+      await publishAdminDatasetToCloud(listings, (percent, curChunk, totalChunks) => {
         setPublishProgress(percent);
+        if (totalChunks > 0 && curChunk > 0) {
+          setImportStatus(
+            `در حال ارسال بسته اطلاعاتی ${toPersianDigits(curChunk)} از ${toPersianDigits(totalChunks)} (${toPersianDigits(percent)}٪)...`
+          );
+        }
       });
       setImportStatus(
-        `بانک اطلاعات روزانه (${toPersianDigits(listings.length)} آگهی) با موفقیت در پایگاه ابری منتشر شد! هم‌اکنون تمامی بازدیدکنندگان و کاربران این داده‌ها را مشاهده می‌کنند.`
+        `بانک اطلاعات روزانه (${toPersianDigits(listings.length)} آگهی) با موفقیت در پایگاه ابری منتشر شد! هم‌اکنون تمامی بازدیدکنندگان این داده‌ها را دریافت می‌کنند.`
       );
       setIsSuccess(true);
     } catch (err: any) {
-      setImportStatus(`خطا در انتشار ابری: ${err.message || 'مشکل در برقراری ارتباط'}`);
+      const msg = err.message || 'مشکل در برقراری ارتباط با فایربیس';
+      setImportStatus(`خطا در انتشار ابری: ${msg}`);
       setIsSuccess(false);
     } finally {
       setIsPublishingCloud(false);
@@ -179,11 +205,13 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
   // Cloud Fetch handler (Fetch latest admin dataset)
   const handleFetchFromCloud = async () => {
     setIsFetchingCloud(true);
+    setPublishProgress(0);
     setImportStatus('در حال بررسی و بارگیری آخرین نسخه بانک اطلاعاتی از فضای ابری...');
 
     try {
       const cloudData = await fetchAdminDatasetFromCloud((percent) => {
         setPublishProgress(percent);
+        setImportStatus(`در حال بارگیری بسته‌های اطلاعاتی ابری (${toPersianDigits(percent)}٪)...`);
       });
 
       if (cloudData && cloudData.length > 0) {
@@ -192,11 +220,11 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
         await saveListingsToIndexedDB(prunedListings);
         onUpdateListings(prunedListings);
         setImportStatus(
-          `آخرین نسخه بانک اطلاعات ابری (${toPersianDigits(prunedListings.length)} خودرو) با موفقیت بارگذاری شد.`
+          `آخرین نسخه بانک اطلاعات ابری (${toPersianDigits(prunedListings.length)} خودرو) با موفقیت دریافت و بارگذاری شد.`
         );
         setIsSuccess(true);
       } else {
-        setImportStatus('هنوز بانک اطلاعاتی روزانه‌ای توسط ادمین در ابر منتشر نشده است.');
+        setImportStatus('هنوز بانک اطلاعاتی روزانه‌ای توسط ادمین در ابر ثبت نشده است.');
         setIsSuccess(false);
       }
     } catch (err: any) {
@@ -568,16 +596,17 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
                   </span>
                 </div>
 
-                {isPublishingCloud && (
-                  <div className="my-2.5 bg-white p-2.5 rounded-xl border border-blue-200 shadow-2xs">
-                    <div className="flex items-center justify-between text-[11px] font-black text-blue-800 mb-1">
-                      <span>در حال انتشار اطلاعات روی ابر...</span>
-                      <span>{toPersianDigits(publishProgress)}٪</span>
+                {/* Progress bar during publish or fetch */}
+                {(isPublishingCloud || isFetchingCloud) && (
+                  <div className="my-2.5 bg-white p-3 rounded-xl border border-blue-200 shadow-2xs">
+                    <div className="flex items-center justify-between text-[11px] font-black text-blue-800 mb-1.5">
+                      <span>{isPublishingCloud ? 'در حال ارسال بسته‌ها به ابر...' : 'در حال دریافت اطلاعات از ابر...'}</span>
+                      <span className="font-mono text-xs">{toPersianDigits(publishProgress)}٪</span>
                     </div>
-                    <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                    <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
                       <div
-                        className="bg-blue-600 h-2 rounded-full transition-all duration-200"
-                        style={{ width: `${publishProgress}%` }}
+                        className="bg-gradient-to-r from-blue-600 to-indigo-600 h-2.5 rounded-full transition-all duration-200"
+                        style={{ width: `${Math.max(publishProgress, 4)}%` }}
                       />
                     </div>
                   </div>
@@ -612,6 +641,41 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
                     <span>دریافت آخرین نسخه ابری ادمین</span>
                   </button>
                 </div>
+
+                {/* Connection Tester Row */}
+                <div className="mt-3 pt-2.5 border-t border-blue-200/60 flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-medium">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span>سرور ابری: Google Firestore (اروپا)</span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleTestCloudConnection}
+                    disabled={isCheckingConn}
+                    className="text-[11px] font-bold text-blue-700 hover:text-blue-900 bg-blue-100/70 hover:bg-blue-100 px-2.5 py-1 rounded-lg cursor-pointer flex items-center gap-1 transition-colors"
+                  >
+                    {isCheckingConn ? <RefreshCw className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                    <span>تست زنده اتصال به سرور ابری</span>
+                  </button>
+                </div>
+
+                {connResult && (
+                  <div
+                    className={`mt-2 p-2.5 rounded-xl text-[11px] font-bold flex items-center gap-1.5 ${
+                      connResult.ok
+                        ? 'bg-emerald-100/80 text-emerald-900 border border-emerald-300'
+                        : 'bg-amber-100/90 text-amber-900 border border-amber-300'
+                    }`}
+                  >
+                    {connResult.ok ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                    )}
+                    <span>{connResult.message}</span>
+                  </div>
+                )}
               </div>
 
               {/* Action Buttons */}
