@@ -21,7 +21,7 @@ import { HeaderAndTabs } from './components/HeaderAndTabs';
 import { SearchBarAndFilters } from './components/SearchBarAndFilters';
 import { VirtualCarList } from './components/VirtualCarList';
 import { CarDetailModal } from './components/CarDetailModal';
-import { ColleagueAuthModal } from './components/ColleagueAuthModal';
+import { ColleagueAuthModal, UserAuthRole } from './components/ColleagueAuthModal';
 import { DataManagerModal } from './components/DataManagerModal';
 import { SettingsModal, AppFontSize } from './components/SettingsModal';
 import { NewListingModal } from './components/NewListingModal';
@@ -30,6 +30,7 @@ import {
   addListingToCloud,
   fetchAdminDatasetFromCloud,
 } from './utils/cloudSync';
+import { fetchListingsFromLiara, addListingToLiara } from './utils/liaraApi';
 
 const DEFAULT_FILTERS: FilterOptions = {
   type: 'sale',
@@ -94,20 +95,34 @@ export default function App() {
     setFontSize(newSize);
   }, []);
 
-  // Colleague mode / Phone numbers access
-  const [isUnlockedColleague, setIsUnlockedColleague] = useState<boolean>(() => {
-    // Check URL parameters for direct access link (e.g., ?admin_key=1234 or ?token=1234)
+  // Roles: 'guest' (hidden phones), 'colleague' (visible phones), 'admin' (server sync & database controls)
+  const [userRole, setUserRole] = useState<UserAuthRole>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
-      const adminKey = params.get('admin_key') || params.get('token');
-      if (adminKey === '1234' || adminKey === 'admin') {
+      const adminKey = params.get('admin') || params.get('admin_key') || params.get('token');
+      if (adminKey === '8888' || adminKey === 'admin') {
+        localStorage.setItem('car_user_role', 'admin');
         localStorage.setItem('car_colleague_unlocked', 'true');
-        return true;
+        return 'admin';
       }
-      return localStorage.getItem('car_colleague_unlocked') === 'true';
+      const colleagueKey = params.get('colleague') || params.get('staff');
+      if (colleagueKey === '1234' || adminKey === '1234') {
+        localStorage.setItem('car_user_role', 'colleague');
+        localStorage.setItem('car_colleague_unlocked', 'true');
+        return 'colleague';
+      }
+      const savedRole = localStorage.getItem('car_user_role') as UserAuthRole;
+      if (savedRole === 'admin' || savedRole === 'colleague') {
+        return savedRole;
+      }
+      if (localStorage.getItem('car_colleague_unlocked') === 'true') {
+        return 'colleague';
+      }
     }
-    return false;
+    return 'guest';
   });
+
+  const isUnlockedColleague = userRole === 'admin' || userRole === 'colleague';
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isDataManagerOpen, setIsDataManagerOpen] = useState(false);
@@ -116,90 +131,107 @@ export default function App() {
   // Handle URL token check on mount
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const adminKey = params.get('admin_key') || params.get('token');
-    if (adminKey === '1234' || adminKey === 'admin') {
-      setIsUnlockedColleague(true);
+    const adminKey = params.get('admin') || params.get('admin_key') || params.get('token');
+    if (adminKey === '8888' || adminKey === 'admin') {
+      setUserRole('admin');
+      localStorage.setItem('car_user_role', 'admin');
+      localStorage.setItem('car_colleague_unlocked', 'true');
+    } else if (adminKey === '1234') {
+      setUserRole('colleague');
+      localStorage.setItem('car_user_role', 'colleague');
       localStorage.setItem('car_colleague_unlocked', 'true');
     }
   }, []);
 
-  const handleUnlockSuccess = useCallback(() => {
-    setIsUnlockedColleague(true);
+  const handleUnlockSuccess = useCallback((role: 'colleague' | 'admin') => {
+    setUserRole(role);
+    localStorage.setItem('car_user_role', role);
     localStorage.setItem('car_colleague_unlocked', 'true');
+    if (role === 'admin') {
+      setIsDataManagerOpen(true);
+    }
   }, []);
 
   const handleToggleColleagueLock = useCallback(() => {
-    if (isUnlockedColleague) {
-      setIsUnlockedColleague(false);
+    if (userRole !== 'guest') {
+      setUserRole('guest');
+      localStorage.removeItem('car_user_role');
       localStorage.removeItem('car_colleague_unlocked');
     } else {
       setIsAuthModalOpen(true);
     }
-  }, [isUnlockedColleague]);
+  }, [userRole]);
 
-  // Asynchronously load cached listings from IndexedDB, cloud admin dataset, and real-time user listings
+  // Centralized Data Loader:
+  // 1. Immediately renders local cache so UI is instantaneous.
+  // 2. Immediately fetches from Liara Server (/api/listings) so EVERY device/phone receives the admin's database.
+  // 3. Polls Liara Server every 25 seconds so all open screens stay continuously synchronized.
   useEffect(() => {
     let isMounted = true;
 
+    // Step 1: Render local cache immediately
     if (!isStorageExplicitlyCleared()) {
       loadListingsFromIndexedDB()
-        .then(async (cached) => {
+        .then((cached) => {
           if (!isMounted) return;
           if (cached && cached.length > 0) {
             const { prunedListings } = pruneOldListings(cached);
             setListings(prunedListings);
-          } else {
-            // Check if there is an admin dataset already published in cloud
-            try {
-              const cloudAdmin = await fetchAdminDatasetFromCloud();
-              if (cloudAdmin && cloudAdmin.length > 0 && isMounted) {
-                const { prunedListings } = pruneOldListings(cloudAdmin);
-                setListings(prunedListings);
-                markUserVisited();
-                saveListingsToIndexedDB(prunedListings);
-                return;
-              }
-            } catch {
-              // Cloud fetch not available or no published admin data yet
-            }
-
-            if (!hasUserVisitedBefore() && isMounted) {
-              const raw = generateRealisticCarListings(5000);
-              const { prunedListings } = pruneOldListings(raw);
-              setListings(prunedListings);
-              markUserVisited();
-              saveListingsToIndexedDB(prunedListings);
-            }
           }
         })
-        .catch((err) => {
-          console.warn('Error reading from IndexedDB:', err);
-        });
+        .catch(() => {});
     }
 
-    // Subscribe to real-time car listings submitted by users & colleagues across all devices
-    const unsubscribe = subscribeToUserListings((cloudUserListings) => {
-      if (!isMounted || cloudUserListings.length === 0) return;
+    // Step 2: Fetch the centralized Liara Server Database (Single Source of Truth)
+    const syncWithLiara = async () => {
+      try {
+        const liaraListings = await fetchListingsFromLiara(8000);
+        if (liaraListings && liaraListings.length > 0 && isMounted) {
+          const { prunedListings } = pruneOldListings(liaraListings);
+          setListings(prunedListings);
+          setStorageExplicitlyCleared(false);
+          markUserVisited();
+          await saveListingsToIndexedDB(prunedListings);
+          return true;
+        }
+      } catch (err) {
+        console.warn('Could not sync with Liara server:', err);
+      }
+      return false;
+    };
 
-      setListings((prev) => {
-        const map = new Map<string, CarListing>();
-        // 1. Add cloud user listings first (newest at top)
-        cloudUserListings.forEach((item) => map.set(item.id, item));
-        // 2. Add existing listings (admin or other)
-        prev.forEach((item) => {
-          if (!map.has(item.id)) {
-            map.set(item.id, item);
-          }
-        });
-        const merged = Array.from(map.values());
-        saveListingsToIndexedDB(merged);
-        return merged;
-      });
+    syncWithLiara().then((synced) => {
+      if (!synced && isMounted && !hasUserVisitedBefore() && !isStorageExplicitlyCleared()) {
+        const raw = generateRealisticCarListings(5000);
+        const { prunedListings } = pruneOldListings(raw);
+        setListings(prunedListings);
+        markUserVisited();
+        saveListingsToIndexedDB(prunedListings);
+      }
     });
+
+    // Step 3: Gentle background polling every 25 seconds so other phones update automatically
+    const pollInterval = setInterval(() => {
+      if (!isMounted) return;
+      fetchListingsFromLiara(6000)
+        .then((serverCars) => {
+          if (serverCars && serverCars.length > 0 && isMounted) {
+            setListings((current) => {
+              // Update if count or latest item changed
+              if (current.length !== serverCars.length || current[0]?.id !== serverCars[0]?.id) {
+                saveListingsToIndexedDB(serverCars);
+                return serverCars;
+              }
+              return current;
+            });
+          }
+        })
+        .catch(() => {});
+    }, 25000);
 
     return () => {
       isMounted = false;
-      unsubscribe();
+      clearInterval(pollInterval);
     };
   }, []);
 
@@ -214,7 +246,12 @@ export default function App() {
       return updated;
     });
 
-    // 2. Push to Firestore so all users across devices receive it instantly
+    // 2. Push to Liara Server & Database (if running on Liara)
+    addListingToLiara(newListing).catch((err) => {
+      console.warn('Could not sync new ad to Liara server:', err);
+    });
+
+    // 3. Push to Firestore so all users across devices receive it
     addListingToCloud(newListing).catch((err) => {
       console.warn('Could not sync new ad to cloud:', err);
     });
@@ -292,9 +329,16 @@ export default function App() {
         saleCount={saleCount}
         buyCount={buyCount}
         isUnlockedColleague={isUnlockedColleague}
+        userRole={userRole}
         onRequestColleagueModal={() => setIsAuthModalOpen(true)}
         onToggleColleagueLock={handleToggleColleagueLock}
-        onOpenDataManager={() => setIsDataManagerOpen(true)}
+        onOpenDataManager={() => {
+          if (userRole === 'admin') {
+            setIsDataManagerOpen(true);
+          } else {
+            setIsAuthModalOpen(true);
+          }
+        }}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenNewListing={() => setIsNewListingOpen(true)}
       />

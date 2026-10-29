@@ -11,6 +11,7 @@ import {
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { CarListing } from '../types/car';
 import { buildSearchIndex } from './persianSearch';
+import { getListingImage } from './imageHelper';
 
 const USER_LISTINGS_COLLECTION = 'user_listings';
 const ADMIN_DATASET_DOC = 'admin_dataset/latest';
@@ -23,6 +24,11 @@ export function subscribeToUserListings(
   onUpdate: (listings: CarListing[]) => void,
   onError?: (err: any) => void
 ): () => void {
+  // If running on Liara domain in Iran, skip Firebase Firestore to avoid CORS and filtering blocks
+  if (typeof window !== 'undefined' && window.location.hostname.includes('liara.run')) {
+    return () => {};
+  }
+
   const colRef = collection(db, USER_LISTINGS_COLLECTION);
   const q = query(colRef, limit(200));
 
@@ -99,7 +105,7 @@ export async function addListingToCloud(listing: CarListing): Promise<void> {
   }
 }
 
-const CHUNK_SIZE = 100;
+const CHUNK_SIZE = 50;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, errorMsg: string): Promise<T> {
   return Promise.race([
@@ -109,6 +115,12 @@ function withTimeout<T>(promise: Promise<T>, ms: number, errorMsg: string): Prom
 }
 
 function sanitizeListingForCloudChunk(item: CarListing) {
+  const thumb = item.imageThumbnailBase64 || item.imageFullBase64 || '';
+  // Preserve compact image (< 35KB) or generate high-quality model SVG
+  const finalImage = thumb && thumb.length > 20 && thumb.length < 35000
+    ? thumb
+    : getListingImage(item, false);
+
   return {
     id: String(item.id || ''),
     type: item.type === 'buy_request' ? 'buy_request' : 'sale',
@@ -132,11 +144,8 @@ function sanitizeListingForCloudChunk(item: CarListing) {
     createdAt: item.createdAt || new Date().toISOString(),
     source: 'admin' as const,
     creatorName: String(item.creatorName || ''),
-    // Only keep compact thumbnails (< 25KB) to guarantee chunk stays far below Firestore 1MB document limit
-    imageThumbnailBase64:
-      item.imageThumbnailBase64 && item.imageThumbnailBase64.length < 25000
-        ? item.imageThumbnailBase64
-        : '',
+    imageThumbnailBase64: finalImage,
+    imageFullBase64: finalImage,
   };
 }
 
@@ -243,8 +252,11 @@ export async function fetchAdminDatasetFromCloud(
       const data = snap.data();
       if (Array.isArray(data.listings)) {
         for (const item of data.listings) {
+          const img = getListingImage(item, false);
           allListings.push({
             ...item,
+            imageThumbnailBase64: item.imageThumbnailBase64 || img,
+            imageFullBase64: item.imageFullBase64 || img,
             source: 'admin',
             _searchIndex: item._searchIndex || buildSearchIndex(item),
           });

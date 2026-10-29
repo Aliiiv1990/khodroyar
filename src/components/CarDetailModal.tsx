@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CarListing } from '../types/car';
 import { toPersianDigits } from '../utils/dataPruner';
+import { getListingImage } from '../utils/imageHelper';
 import {
   X,
   Phone,
@@ -219,7 +220,7 @@ export const CarDetailModal: React.FC<CarDetailModalProps> = ({
           >
             {/* The Crisp Car Photo - Unblurred, fills background so it is clearly visible through the glass */}
             <img
-              src={listing.imageFullBase64}
+              src={getListingImage(listing, true)}
               alt={listing.title}
               className={`w-full h-full transition-all duration-200 select-none ${
                 showOverlay ? 'object-cover' : 'object-contain'

@@ -2,6 +2,7 @@ import React from 'react';
 import { CarListing } from '../types/car';
 import { LazyThumbnail } from './LazyThumbnail';
 import { toPersianDigits } from '../utils/dataPruner';
+import { getListingImage } from '../utils/imageHelper';
 import { Phone, Lock, FileText, ChevronLeft, ShieldCheck, UserCheck, Sparkles } from 'lucide-react';
 
 interface CarCardProps {
@@ -63,7 +64,7 @@ export const CarCard: React.FC<CarCardProps> = React.memo(({
         ) : (
           <div className="relative shrink-0">
             <LazyThumbnail
-              base64Src={listing.imageThumbnailBase64}
+              base64Src={getListingImage(listing, false)}
               alt={listing.model}
               size={80}
             />

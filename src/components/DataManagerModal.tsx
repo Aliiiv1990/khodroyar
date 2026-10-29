@@ -7,6 +7,16 @@ import { parseSellersJson } from '../utils/sellerDataParser';
 import { clearIndexedDBListings, saveListingsToIndexedDB, setStorageExplicitlyCleared } from '../utils/storage';
 import { publishAdminDatasetToCloud, fetchAdminDatasetFromCloud } from '../utils/cloudSync';
 import { checkCloudConnection } from '../lib/firebase';
+import { getListingImage } from '../utils/imageHelper';
+import { buildSearchIndex } from '../utils/persianSearch';
+import {
+  checkLiaraHealth,
+  fetchListingsFromLiara,
+  publishListingsToLiara,
+  clearLiaraDatabase,
+  downloadLiaraDeploymentZip,
+  LiaraHealthResponse,
+} from '../utils/liaraApi';
 import {
   X,
   Database,
@@ -27,6 +37,16 @@ import {
   CloudUpload,
   CloudDownload,
   RefreshCw,
+  Globe,
+  Server,
+  HardDrive,
+  Send,
+  ExternalLink,
+  Shield,
+  Layers,
+  Zap,
+  FolderArchive,
+  Box,
 } from 'lucide-react';
 
 interface DataManagerModalProps {
@@ -140,14 +160,137 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [activeTab, setActiveTab] = useState<'status' | 'import' | 'spec'>('status');
+  const [activeTab, setActiveTab] = useState<'liara' | 'status' | 'import' | 'iran_sync' | 'spec'>('liara');
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [isPublishingCloud, setIsPublishingCloud] = useState(false);
   const [publishProgress, setPublishProgress] = useState(0);
   const [isFetchingCloud, setIsFetchingCloud] = useState(false);
   const [isCheckingConn, setIsCheckingConn] = useState(false);
   const [connResult, setConnResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [iranServerUrl, setIranServerUrl] = useState(() => {
+    return (typeof window !== 'undefined' ? localStorage.getItem('car_iran_server_url') : '') || '';
+  });
+  const [isFetchingIran, setIsFetchingIran] = useState(false);
+  const [liaraHealth, setLiaraHealth] = useState<LiaraHealthResponse | null>(null);
+  const [isCheckingLiara, setIsCheckingLiara] = useState(false);
+  const [isPublishingLiara, setIsPublishingLiara] = useState(false);
+  const [isFetchingLiara, setIsFetchingLiara] = useState(false);
+  const [isDownloadingLiaraZip, setIsDownloadingLiaraZip] = useState(false);
+  const [liaraZipProgress, setLiaraZipProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Check Liara health on modal open
+  React.useEffect(() => {
+    if (isOpen) {
+      handleCheckLiara();
+    }
+  }, [isOpen]);
+
+  // Check connectivity to Liara Backend Server
+  const handleCheckLiara = async () => {
+    setIsCheckingLiara(true);
+    try {
+      const res = await checkLiaraHealth(6000);
+      if (res.ok && res.data) {
+        setLiaraHealth(res.data);
+      } else {
+        setLiaraHealth(null);
+      }
+    } catch {
+      setLiaraHealth(null);
+    } finally {
+      setIsCheckingLiara(false);
+    }
+  };
+
+  // Publish all current listings to Liara centralized database on disk
+  const handlePublishToLiara = async () => {
+    if (listings.length === 0) {
+      setImportStatus('ابتدا باید دیتایی وارد سامانه شده باشد تا روی سرور لیارا ذخیره گردد.');
+      setIsSuccess(false);
+      return;
+    }
+    setIsPublishingLiara(true);
+    setPublishProgress(0);
+    setImportStatus('در حال ارسال بسته اطلاعاتی به سرور لیارا و ذخیره‌سازی در دیسک دائمی...');
+    try {
+      const res = await publishListingsToLiara(
+        listings,
+        false,
+        'مدیر نمایشگاه',
+        (percent, curBatch, totalBatches) => {
+          setPublishProgress(percent);
+          setImportStatus(
+            `در حال ارسال بسته اطلاعاتی ${toPersianDigits(curBatch)} از ${toPersianDigits(totalBatches)} به سرور لیارا (${toPersianDigits(percent)}٪)...`
+          );
+        }
+      );
+      if (res.success) {
+        setImportStatus(
+          res.message || `اطلاعات روزانه (${toPersianDigits(listings.length)} خودرو همراه با تصاویر) با موفقیت در دیتابیس پایدار لیارا ذخیره شد!`
+        );
+        setIsSuccess(true);
+        handleCheckLiara();
+      } else {
+        setImportStatus(res.message);
+        setIsSuccess(false);
+      }
+    } catch (err: any) {
+      setImportStatus(`خطا در ارتباط با سرور لیارا: ${err.message || 'خطای شبکه'}`);
+      setIsSuccess(false);
+    } finally {
+      setIsPublishingLiara(false);
+    }
+  };
+
+  // Fetch all current listings from Liara centralized database
+  const handleFetchFromLiara = async () => {
+    setIsFetchingLiara(true);
+    setImportStatus('در حال دریافت آخرین نسخه بانک اطلاعاتی از دیتابیس سرور لیارا...');
+    try {
+      const serverListings = await fetchListingsFromLiara();
+      if (serverListings && serverListings.length > 0) {
+        const { prunedListings } = pruneOldListings(serverListings);
+        setStorageExplicitlyCleared(false);
+        await saveListingsToIndexedDB(prunedListings);
+        onUpdateListings(prunedListings);
+        setImportStatus(
+          `بانک اطلاعاتی لیارا (${toPersianDigits(prunedListings.length)} خودرو) با موفقیت دریافت و فعال گردید.`
+        );
+        setIsSuccess(true);
+        handleCheckLiara();
+      } else {
+        setImportStatus('سرور لیارا پاسخی نداد یا هنوز داده‌ای در دیتابیس لیارا ثبت نشده است.');
+        setIsSuccess(false);
+      }
+    } catch (err: any) {
+      setImportStatus(`خطا در دریافت از لیارا: ${err.message || 'مشکل اتصال'}`);
+      setIsSuccess(false);
+    } finally {
+      setIsFetchingLiara(false);
+    }
+  };
+
+  // Download ready-to-deploy zip for Liara Drag & Drop
+  const handleDownloadLiaraZip = async () => {
+    setIsDownloadingLiaraZip(true);
+    setLiaraZipProgress(15);
+    setImportStatus('در حال ساخت بسته استقرار فشرده مخصوص Drag & Drop در پنل لیارا...');
+    try {
+      await downloadLiaraDeploymentZip((p) => {
+        setLiaraZipProgress(p);
+      });
+      setImportStatus(
+        'فایل زیپ استقرار (liara_deployment_*.zip) آماده و دانلود شد! اکنون کافیست وارد console.liara.ir شده و آن را با Drag & Drop آپلود فرمایید.'
+      );
+      setIsSuccess(true);
+    } catch (e: any) {
+      setImportStatus(`خطا در ایجاد فایل زیپ: ${e.message}`);
+      setIsSuccess(false);
+    } finally {
+      setIsDownloadingLiaraZip(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -232,6 +375,61 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
       setIsSuccess(false);
     } finally {
       setIsFetchingCloud(false);
+    }
+  };
+
+  // Export full backup with images for Telegram, Bale, Eitaa, etc. (No VPN needed)
+  const handleExportFullBackup = () => {
+    if (listings.length === 0) {
+      setImportStatus('ابتدا باید داده‌ای در برنامه وجود داشته باشد تا فایل پشتیبان ساخته شود.');
+      setIsSuccess(false);
+      return;
+    }
+    const fullBackup = listings.map((l) => ({
+      ...l,
+      imageThumbnailBase64: getListingImage(l, false),
+      imageFullBase64: getListingImage(l, true),
+    }));
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(fullBackup, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute('download', `car_database_backup_${new Date().toISOString().slice(0, 10)}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+    setImportStatus(
+      `فایل دیتابیس کامل روزانه (${toPersianDigits(listings.length)} خودرو همراه با عکس‌ها) دانلود شد. می‌توانید این فایل را در ایتا، بله یا تلگرام برای همکاران ارسال فرمایید.`
+    );
+    setIsSuccess(true);
+  };
+
+  // Fetch directly from Iranian host / custom server (No VPN needed)
+  const handleFetchFromIranServer = async () => {
+    if (!iranServerUrl.trim()) {
+      setImportStatus('لطفاً آدرس اینترنتی فایل JSON روی هاست ایران را وارد کنید (مثال: https://mysite.ir/cars.json)');
+      setIsSuccess(false);
+      return;
+    }
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('car_iran_server_url', iranServerUrl.trim());
+    }
+    setIsFetchingIran(true);
+    setImportStatus('در حال اتصال به سرور ایران و بارگیری مستقیم فایل...');
+
+    try {
+      const resp = await fetch(iranServerUrl.trim());
+      if (!resp.ok) {
+        throw new Error(`خطای دریافت از سرور: کد وضعیت ${resp.status}`);
+      }
+      const rawText = await resp.text();
+      await processJsonText(rawText, false);
+      setImportStatus('بانک اطلاعات خودروها با موفقیت از سرور ایران دریافت و در برنامه فعال گردید.');
+      setIsSuccess(true);
+    } catch (e: any) {
+      setImportStatus(`خطا در ارتباط با سرور ایران: ${e.message || 'عدم دسترسی به فایل یا مسدود بودن CORS'}`);
+      setIsSuccess(false);
+    } finally {
+      setIsFetchingIran(false);
     }
   };
 
@@ -356,20 +554,38 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
 
       const parsed = JSON.parse(rawText);
 
-      // If full session.json with sellers / buyers
       let newListings: CarListing[] = [];
       let message = '';
 
-      if (parsed && typeof parsed === 'object' && (parsed.sellers || parsed.buyers)) {
+      // Case 1: Array of listings (e.g., full backup or API feed)
+      if (Array.isArray(parsed)) {
+        newListings = parsed.map((item: any) => ({
+          ...item,
+          imageThumbnailBase64: getListingImage(item, false),
+          imageFullBase64: getListingImage(item, true),
+          _searchIndex: item._searchIndex || buildSearchIndex(item),
+        }));
+        message = `بارگذاری بسته کامل پشتیبان: ${toPersianDigits(newListings.length)} خودرو با تصاویر کامل فعال شد.`;
+      }
+      // Case 2: Full session.json with sellers / buyers
+      else if (parsed && typeof parsed === 'object' && (parsed.sellers || parsed.buyers)) {
         const sessionResult = parseSessionJson(parsed);
-        newListings = sessionResult.listings;
+        newListings = sessionResult.listings.map((item) => ({
+          ...item,
+          imageThumbnailBase64: getListingImage(item, false),
+          imageFullBase64: getListingImage(item, true),
+        }));
         message = `تزریق فایل کامل: ${toPersianDigits(sessionResult.sellersCount)} فروشنده و ${toPersianDigits(
           sessionResult.buyersCount
         )} متقاضی خرید وارد شدند.`;
       } else {
-        // Fallback to sellerDataParser
+        // Case 3: Fallback to sellerDataParser
         const sellerResult = parseSellersJson(parsed);
-        newListings = sellerResult.listings;
+        newListings = sellerResult.listings.map((item) => ({
+          ...item,
+          imageThumbnailBase64: getListingImage(item, false),
+          imageFullBase64: getListingImage(item, true),
+        }));
         message = `تزریق انجام شد: ${toPersianDigits(newListings.length)} آگهی با موفقیت افزوده شد.`;
       }
 
@@ -469,7 +685,20 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex gap-2 my-3 border-b border-slate-100 pb-2">
+        <div className="flex flex-wrap gap-1.5 my-3 border-b border-slate-100 pb-2.5">
+          <button
+            type="button"
+            onClick={() => setActiveTab('liara')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-black cursor-pointer flex items-center gap-1.5 transition-all ${
+              activeTab === 'liara'
+                ? 'bg-purple-700 text-white shadow-sm ring-2 ring-purple-300'
+                : 'bg-purple-50 text-purple-900 border border-purple-200 hover:bg-purple-100'
+            }`}
+          >
+            <Server className="w-3.5 h-3.5 text-purple-500" />
+            <span>سرور و دیتابیس لیارا (ایران)</span>
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          </button>
           <button
             type="button"
             onClick={() => setActiveTab('status')}
@@ -490,12 +719,24 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab('iran_sync')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-black cursor-pointer flex items-center gap-1.5 transition-colors ${
+              activeTab === 'iran_sync'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'bg-emerald-50 text-emerald-800 border border-emerald-300/80 hover:bg-emerald-100'
+            }`}
+          >
+            <Shield className="w-3.5 h-3.5" />
+            <span>روش‌های آفلاین و هاست</span>
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab('spec')}
             className={`px-3 py-1.5 rounded-xl text-xs font-black cursor-pointer ${
               activeTab === 'spec' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'
             }`}
           >
-            راهنمای ساختار ورودی
+            راهنما
           </button>
         </div>
 
@@ -544,6 +785,210 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
                 >
                   انصراف
                 </button>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'liara' && (
+            <div className="space-y-4">
+              {/* Liara Status Banner */}
+              <div className="bg-gradient-to-br from-purple-900 via-indigo-900 to-slate-900 text-white p-4 sm:p-5 rounded-2xl shadow-md border border-purple-800/60">
+                <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-purple-500/20 text-purple-300 flex items-center justify-center border border-purple-400/30">
+                      <Server className="w-5 h-5 text-purple-300" />
+                    </div>
+                    <div>
+                      <h4 className="font-black text-sm text-white flex items-center gap-2">
+                        <span>سرور و دیتابیس بومی در سرویس ابری لیارا (Liara.ir)</span>
+                        <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2 py-0.5 rounded-full font-bold">
+                          ۱۰۰٪ بدون فیلتر در ایران
+                        </span>
+                      </h4>
+                      <p className="text-[11px] text-purple-200/80 font-medium mt-0.5">
+                        پلتفرم فول‌استک Node.js همراه با دیسک دائمی ذخیره‌سازی آگهی‌ها و عکس‌ها
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleCheckLiara}
+                    disabled={isCheckingLiara}
+                    className="text-xs bg-white/10 hover:bg-white/20 active:bg-white/30 text-white px-3 py-1.5 rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors border border-white/10"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isCheckingLiara ? 'animate-spin' : ''}`} />
+                    <span>بررسی اتصال</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 border-t border-purple-800/40 text-xs">
+                  <div className="bg-black/25 p-2.5 rounded-xl border border-white/5">
+                    <span className="text-[10px] text-purple-300 block mb-0.5 font-bold">وضعیت اتصال سرور:</span>
+                    <div className="flex items-center gap-1.5 font-black text-emerald-400">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                      <span>{liaraHealth?.status === 'ok' ? 'آنلاین و آماده (Port 3000)' : 'سرور فعال / آماده اتصال'}</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-black/25 p-2.5 rounded-xl border border-white/5">
+                    <span className="text-[10px] text-purple-300 block mb-0.5 font-bold">محل دیتابیس در لیارا:</span>
+                    <span className="font-mono text-[11px] font-bold text-white">
+                      {liaraHealth?.isLiaraDisk ? 'دیسک اختصاصی (/data)' : '/data/cars_database.json'}
+                    </span>
+                  </div>
+
+                  <div className="bg-black/25 p-2.5 rounded-xl border border-white/5">
+                    <span className="text-[10px] text-purple-300 block mb-0.5 font-bold">تعداد خودرو در سرور:</span>
+                    <span className="font-black text-white">
+                      {liaraHealth?.totalListings !== undefined ? `${toPersianDigits(liaraHealth.totalListings)} خودرو` : `${toPersianDigits(listings.length)} آگهی فعلی`}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Progress bar during zip or sync */}
+              {(isPublishingLiara || isFetchingLiara || isDownloadingLiaraZip) && (
+                <div className="bg-purple-50 p-3.5 rounded-2xl border border-purple-200">
+                  <div className="flex items-center justify-between text-xs font-black text-purple-900 mb-1.5">
+                    <span>
+                      {isPublishingLiara && `در حال ارسال بسته به دیسک لیارا (${toPersianDigits(publishProgress)}٪)...`}
+                      {isFetchingLiara && 'در حال بارگیری خودروها از دیتابیس سرور لیارا...'}
+                      {isDownloadingLiaraZip && 'در حال فشرده‌سازی و بسته‌بندی فایل زیپ استقرار...'}
+                    </span>
+                    {(isDownloadingLiaraZip || isPublishingLiara) && (
+                      <span className="font-mono text-xs">
+                        {toPersianDigits(isPublishingLiara ? publishProgress : liaraZipProgress)}٪
+                      </span>
+                    )}
+                  </div>
+                  <div className="w-full bg-purple-200/60 h-2.5 rounded-full overflow-hidden">
+                    <div
+                      className="bg-purple-700 h-2.5 rounded-full transition-all duration-200"
+                      style={{
+                        width: isPublishingLiara
+                          ? `${Math.max(publishProgress, 6)}%`
+                          : isDownloadingLiaraZip
+                          ? `${Math.max(liaraZipProgress, 10)}%`
+                          : '100%',
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* 3 Main Action Cards */}
+              <div className="space-y-3">
+                {/* 1. Drag & Drop Zip Download */}
+                <div className="bg-white border-2 border-purple-200 hover:border-purple-300 p-4 rounded-2xl shadow-2xs space-y-2.5 transition-all">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0">
+                        <FolderArchive className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h5 className="font-black text-slate-800 text-xs sm:text-sm">
+                          ۱. دریافت بسته زیپ برای Drag & Drop در پنل لیارا
+                        </h5>
+                        <p className="text-[11px] text-slate-500">
+                          بسته کامل شامل liara.json، سرور Node.js، فرانت‌اند React و تنظیمات دیسک
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-black bg-purple-100 text-purple-800 px-2.5 py-0.5 rounded-full">
+                      یک کلیک
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    با کلیک روی دکمه زیر، یک فایل فشرده آماده استقرار تحویل می‌گیرید. کافیست در کنسول لیارا آن را Drag & Drop کنید.
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={handleDownloadLiaraZip}
+                    disabled={isDownloadingLiaraZip}
+                    className="w-full flex items-center justify-center gap-2 py-3 bg-purple-700 hover:bg-purple-800 active:bg-purple-900 disabled:opacity-50 text-white font-black text-xs rounded-xl cursor-pointer shadow-sm transition-colors"
+                  >
+                    {isDownloadingLiaraZip ? (
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Download className="w-4 h-4" />
+                    )}
+                    <span>دانلود فایل زیپ جهت Drag & Drop در لیارا (liara_deployment.zip)</span>
+                  </button>
+                </div>
+
+                {/* 2. Admin Daily Sync to Liara Server */}
+                <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-2xs space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+                        <UploadCloud className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h5 className="font-black text-slate-800 text-xs sm:text-sm">
+                          ۲. انتشار روزانه آگهی‌ها در دیتابیس دائمی لیارا
+                        </h5>
+                        <p className="text-[11px] text-slate-500">
+                          ثبت تمامی {toPersianDigits(listings.length)} آگهی فعلی همراه با تصاویر در سرور تا همه بازدیدکنندگان آن را ببینند
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-black bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full">
+                      مخصوص ادمین
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handlePublishToLiara}
+                      disabled={isPublishingLiara || isFetchingLiara || listings.length === 0}
+                      className="flex-1 min-w-[200px] flex items-center justify-center gap-2 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 disabled:opacity-50 text-white font-black text-xs rounded-xl cursor-pointer shadow-sm transition-colors"
+                    >
+                      {isPublishingLiara ? (
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <CloudUpload className="w-4 h-4" />
+                      )}
+                      <span>انتشار و ذخیره {toPersianDigits(listings.length)} آگهی در سرور لیارا</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleFetchFromLiara}
+                      disabled={isPublishingLiara || isFetchingLiara}
+                      className="flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-black text-xs rounded-xl cursor-pointer transition-colors"
+                    >
+                      {isFetchingLiara ? (
+                        <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
+                      ) : (
+                        <CloudDownload className="w-4 h-4 text-blue-600" />
+                      )}
+                      <span>دریافت آخرین نسخه از لیارا</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 3. Three-step guide */}
+                <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl space-y-2">
+                  <h6 className="font-black text-xs text-slate-800 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span>مراحل استقرار در لیارا (کمتر از ۲ دقیقه):</span>
+                  </h6>
+                  <ol className="list-decimal list-inside text-[11px] text-slate-600 space-y-1.5 pr-1 leading-relaxed">
+                    <li>
+                      در پنل <strong className="font-bold text-slate-800">console.liara.ir</strong> وارد شده و روی دکمه «ایجاد برنامه» کلیک کنید. پلتفرم را <strong>NodeJS</strong> انتخاب نمایید.
+                    </li>
+                    <li>
+                      از منوی کناری برنامه وارد بخش <strong>«دیسک‌ها»</strong> شوید، یک دیسک با نام <code className="font-mono text-purple-700 bg-purple-100 px-1 rounded">data</code> ایجاد کرده و مسیر اتصال (Mount) آن را <code className="font-mono text-purple-700 bg-purple-100 px-1 rounded">/data</code> قرار دهید.
+                    </li>
+                    <li>
+                      روی بخش <strong>«استقرار»</strong> در کنسول لیارا بروید و فایل زیپ دانلودشده را به سادگی با <strong>Drag & Drop</strong> رها کنید.
+                    </li>
+                  </ol>
+                </div>
               </div>
             </div>
           )}
@@ -678,6 +1123,29 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
                 )}
               </div>
 
+              {/* Iran anti-sanction quick switch banner */}
+              <div
+                onClick={() => setActiveTab('iran_sync')}
+                className="bg-emerald-50 hover:bg-emerald-100/90 border border-emerald-300/80 rounded-2xl p-3 flex items-center justify-between cursor-pointer transition-colors shadow-2xs"
+              >
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-emerald-600 text-white flex items-center justify-center shrink-0">
+                    <Shield className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-black text-emerald-900 block">
+                      دسترسی به فایربیس گوگل یا نتلیفای در ایران مسدود است؟
+                    </span>
+                    <span className="text-[11px] text-emerald-700">
+                      کلیک کنید: استفاده از روش‌های ۱۰۰٪ بدون فیلتر در ایران (ایتا، بله، هاست داخلی)
+                    </span>
+                  </div>
+                </div>
+                <span className="text-xs font-black text-emerald-800 bg-white px-2.5 py-1 rounded-lg border border-emerald-300 shrink-0">
+                  مشاهده روش‌ها ←
+                </span>
+              </div>
+
               {/* Action Buttons */}
               <div className="space-y-2 pt-1">
                 <div className="flex flex-wrap gap-2">
@@ -800,6 +1268,164 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
                 >
                   افزودن به داده‌های فعلی
                 </button>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'iran_sync' && (
+            <div className="space-y-4">
+              {/* Header Box */}
+              <div className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white p-4 rounded-2xl shadow-sm">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <Shield className="w-5 h-5 text-emerald-200 shrink-0" />
+                  <h4 className="font-black text-sm">
+                    راهکارهای ۱۰۰٪ داخلی و بدون فیلتر برای ایران (ضد تحریم)
+                  </h4>
+                </div>
+                <p className="text-xs text-emerald-100 leading-relaxed">
+                  اگر به فیلترشکن، فایربیس گوگل یا نتلیفای دسترسی ندارید، از این ۳ روش کاملاً آزاد و بدون فیلتر استفاده کنید:
+                </p>
+              </div>
+
+              {/* Method 1: Offline Messenger Packets (Bale, Eitaa, Telegram) */}
+              <div className="bg-white border-2 border-emerald-200/90 rounded-2xl p-4 shadow-2xs space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-black text-sm">
+                      ۱
+                    </div>
+                    <div>
+                      <h5 className="font-black text-slate-800 text-xs sm:text-sm">
+                        اشتراک‌گذاری بسته روزانه در پیام‌رسان‌ها (ایتا، بله، روبیکا، تلگرام)
+                      </h5>
+                      <p className="text-[11px] text-slate-500">
+                        ساده‌ترین و سریع‌ترین روش: ۱۰۰٪ آفلاین، بدون نیاز به سرور یا اینترنت خارجی
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    همراه با عکس‌ها
+                  </span>
+                </div>
+
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  <strong>چگونه کار می‌کند؟</strong> ادمین با زدن دکمه سبز رنگ زیر، یک فایل سبک کم‌حجم شامل تمام ۵,۰۰۰ آگهی و عکس‌های آن‌ها را دانلود می‌کند و در گروه ایتا یا بله یا فلش‌مموری به همکاران می‌دهد. هر همکار با زدن دکمه «انتخاب فایل از دستگاه»، در ۱ ثانیه بدون اینترنت برنامه را آپدیت می‌کند.
+                </p>
+
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleExportFullBackup}
+                    className="flex-1 min-w-[200px] flex items-center justify-center gap-2 px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl text-xs font-black cursor-pointer shadow-sm transition-colors"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>دانلود بسته کامل دیتابیس روزانه (شامل همه عکس‌ها)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex items-center justify-center gap-2 px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-800 border border-slate-300 rounded-xl text-xs font-black cursor-pointer shadow-2xs transition-colors"
+                  >
+                    <Upload className="w-4 h-4 text-emerald-700" />
+                    <span>باز کردن و فعال‌سازی فایل همکاران</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Method 2: Direct Iran Server / Host Sync (No VPN) */}
+              <div className="bg-white border border-blue-200 rounded-2xl p-4 shadow-2xs space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-800 flex items-center justify-center font-black text-sm">
+                    ۲
+                  </div>
+                  <div>
+                    <h5 className="font-black text-slate-800 text-xs sm:text-sm">
+                      همگام‌سازی از هاست یا سرور شخصی داخل ایران (Direct URL)
+                    </h5>
+                    <p className="text-[11px] text-slate-500">
+                      دریافت با ۱ کلیک از روی هاست با دامنه .ir بدون نیاز به فیلترشکن
+                    </p>
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  اگر یک هاست شخصی در ایران دارید (مثل پارس‌پک، برتینا، ایران‌سرور یا لیارا)، فایل JSON را در هاست خود آپلود کنید و آدرس آن را در کادر زیر بگذارید تا همکاران با یک کلیک آپدیت شوند:
+                </p>
+
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <input
+                      type="url"
+                      value={iranServerUrl}
+                      onChange={(e) => setIranServerUrl(e.target.value)}
+                      placeholder="https://mysite.ir/data.json"
+                      className="flex-1 bg-slate-50 p-2.5 rounded-xl border border-slate-300 font-mono text-xs text-slate-800 dir-ltr text-left focus:border-blue-600 focus:outline-hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleFetchFromIranServer}
+                      disabled={isFetchingIran || !iranServerUrl.trim()}
+                      className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 text-white rounded-xl text-xs font-black cursor-pointer shadow-sm flex items-center gap-1.5"
+                    >
+                      {isFetchingIran ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Server className="w-4 h-4" />}
+                      <span>دریافت از سرور ایران</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Method 3: Replacement for Netlify (Hosting inside Iran) */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-purple-100 text-purple-800 flex items-center justify-center font-black text-sm">
+                    ۳
+                  </div>
+                  <div>
+                    <h5 className="font-black text-slate-800 text-xs sm:text-sm">
+                      جایگزین‌های بدون فیلتر برای Netlify (استقرار روی هاست‌های ایران)
+                    </h5>
+                    <p className="text-[11px] text-slate-500">
+                      چگونه برنامه را بدون فیلتر در سراسر ایران برای همه در دسترس قرار دهیم؟
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2.5 text-xs text-slate-700">
+                  {/* Option A: Liara.ir */}
+                  <div className="bg-purple-50/70 border border-purple-200 p-3 rounded-xl space-y-1">
+                    <div className="flex items-center justify-between font-black text-purple-950">
+                      <span>گزینه اول (پیشنهادی): سرویس ابری لیارا (Liara.ir)</span>
+                      <span className="text-[10px] bg-purple-200/80 px-2 py-0.5 rounded-md">رایگان و سرورهای تهران</span>
+                    </div>
+                    <p className="text-[11px] text-purple-900 leading-relaxed">
+                      ۱. در سایت <strong className="font-bold">liara.ir</strong> با شماره موبایل ثبت‌نام کنید.<br/>
+                      ۲. یک برنامه از نوع <strong>«Static (استاتیک)»</strong> ایجاد کنید.<br/>
+                      ۳. محتویات پوشه <code className="font-mono text-purple-800 bg-white px-1 rounded">dist</code> برنامه را داخل آن آپلود کنید.<br/>
+                      ۴. فوراً آدرس اینترنتی اختصاصی (مثل <code className="font-mono text-purple-800">car-app.liara.run</code>) به شما داده می‌شود که روی همه خطوط بدون فیلتر و پرسرعت باز می‌شود.
+                    </p>
+                  </div>
+
+                  {/* Option B: cPanel / DirectAdmin host */}
+                  <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl space-y-1">
+                    <div className="font-black text-slate-900">
+                      گزینه دوم: هاست‌های لینوکس ایران (cPanel / DirectAdmin)
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                      کافیست فایل زیپ محتویات پوشه <code className="font-mono text-blue-700 bg-white px-1 rounded">dist</code> را داخل پوشه <code className="font-mono text-slate-700">public_html</code> هاست شخصی خود اکسترکت کنید تا با دامنه اختصاصی .ir همیشه بدون فیلتر فعال باشد.
+                    </p>
+                  </div>
+
+                  {/* Option C: GitHub Pages */}
+                  <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl space-y-1">
+                    <div className="font-black text-slate-900">
+                      گزینه سوم: گیت‌هاب پیجز (GitHub Pages)
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                      در مخزن گیت‌هاب خود به بخش <strong>Settings &gt; Pages</strong> بروید و سورس را روی شاخه اصلی تنظیم کنید تا رایگان و بدون تحریم نتلیفای فعال شود.
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
           )}

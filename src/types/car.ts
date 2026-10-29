@@ -25,6 +25,9 @@ export interface CarListing {
   isTextOnly?: boolean; // True if it is a text-only record (.txt or no image)
   source?: 'admin' | 'user'; // 'admin' = bulk daily dataset, 'user' = submitted by user/colleague
   creatorName?: string; // Optional name or username of person who submitted
+  rowIndex?: number;
+  imageFileName?: string;
+  status?: string;
   // Normalized cached string for instant sub-millisecond filtering
   _searchIndex?: string;
 }
