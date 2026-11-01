@@ -279,12 +279,8 @@ export function parseSessionJson(
         imageSrc = createCarPlaceholder(attrs.colorHex, standardCarName, false);
       }
 
-      const description = [
-        fileDescription,
-        item.imageFileName && item.imageFileName !== 'ورودی دستی' ? `نام فایل منبع: ${item.imageFileName}` : '',
-      ]
-        .filter(Boolean)
-        .join('\n');
+      // Keep filename phone/code metadata out of the visible ad text.
+      const description = fileDescription;
 
       const listing: CarListing = {
         id: id,
