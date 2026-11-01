@@ -185,13 +185,13 @@ export function parseSessionJson(
   sellersCount: number;
   buyersCount: number;
   errorsCount: number;
-  recoveredErrorRowsCount: number;
+  retainedErrorRowsCount: number;
 } {
   const listings: CarListing[] = [];
   let sellersCount = 0;
   let buyersCount = 0;
   let errorsCount = 0;
-  let recoveredErrorRowsCount = 0;
+  let retainedErrorRowsCount = 0;
   const now = Date.now();
   const currentDateFa = new Date().toLocaleDateString('fa-IR');
 
@@ -214,7 +214,7 @@ export function parseSessionJson(
           errorsCount++;
           continue;
         }
-        recoveredErrorRowsCount++;
+        retainedErrorRowsCount++;
       }
 
       const rawCarName = (
@@ -456,7 +456,7 @@ export function parseSessionJson(
     }
   }
 
-  return { listings, sellersCount, buyersCount, errorsCount, recoveredErrorRowsCount };
+  return { listings, sellersCount, buyersCount, errorsCount, retainedErrorRowsCount };
 }
 
 /**
@@ -473,7 +473,7 @@ export async function parseZipArchive(
   errorsCount: number;
   extractedImagesCount: number;
   extractedTextFilesCount: number;
-  recoveredErrorRowsCount: number;
+  retainedErrorRowsCount: number;
 }> {
   const zip = new JSZip();
   const loadedZip = await zip.loadAsync(file);
@@ -584,7 +584,7 @@ export async function parseZipArchive(
     ...result,
     extractedImagesCount,
     extractedTextFilesCount,
-    recoveredErrorRowsCount: result.recoveredErrorRowsCount,
+    retainedErrorRowsCount: result.retainedErrorRowsCount,
   };
 }
 
