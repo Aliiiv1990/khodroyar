@@ -123,6 +123,12 @@ test('filename metadata is separated from image caption and attached text wins f
         رنگ: 'سفید',
       },
       {
+        id: 'long-numeric-prefix',
+        imageFileName: '191804867641352_9499_Rx_350_2013_بدون_رنگ_صافکاری_دارد_موتور_و_فنی_به_ض.jpg',
+        status: 'success',
+        اسم_ماشین: 'لکسوس RX 350',
+      },
+      {
         id: 'text-ad',
         imageFileName: '989125937707_5614.txt',
         status: 'success',
@@ -148,6 +154,10 @@ test('filename metadata is separated from image caption and attached text wins f
   assert.equal(noCaptionAd.phoneNumber, '09121952420');
   assert.equal(noCaptionAd.fileDescription, '');
   assert.equal(noCaptionAd.description, '');
+
+  const longPrefixAd = listings.find((item) => item.id === 'long-numeric-prefix')!;
+  assert.equal(longPrefixAd.phoneNumber, 'ثبت نشده');
+  assert.equal(longPrefixAd.fileDescription, 'Rx 350 2013 بدون رنگ صافکاری دارد موتور و فنی به ض');
 
   const textAd = listings.find((item) => item.id === 'text-ad')!;
   assert.equal(textAd.phoneNumber, '09125937707');
