@@ -2,7 +2,7 @@ import JSZip from 'jszip';
 import { CarListing, CarListingType } from '../types/car';
 import { normalizePersianText, buildSearchIndex } from './persianSearch';
 import { toPersianDigits, formatTomanPrice } from './dataPruner';
-import { formatIranianPhone, extractIranianPhone, parseCarYear, extractCarAttributes, detectBrand } from './sellerDataParser';
+import { formatIranianPhone, extractIranianPhone, parseCarYear, extractCarAttributes, detectBrand, extractFilenameCode } from './sellerDataParser';
 
 export interface RawSellerRecord {
   id: string;
@@ -317,6 +317,7 @@ export function parseSessionJson(
         isTextOnly,
         rowIndex: item.rowIndex,
         imageFileName: item.imageFileName,
+        sourceCode: extractFilenameCode(item.imageFileName),
         status: item.status || 'success',
         importBatchName: batchName,
         importDate: currentDateFa,
