@@ -83,12 +83,10 @@ export function extractCleanFileDescription(
   // Replace underscores with spaces
   cleaned = cleaned.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
 
-  if (/^\d+$/.test(cleaned)) {
-    return rawColor?.trim() || '';
-  }
+  if (/^\d+$/.test(cleaned)) return '';
 
   // A filename containing only phone + random code has no caption; never expose metadata.
-  return cleaned || rawColor?.trim() || '';
+  return cleaned;
 }
 
 /**
