@@ -73,6 +73,8 @@ test('parseSellersJson retains recoverable error rows with phone-bearing filenam
   });
 
   assert.equal(result.listings.length, 1);
+  assert.equal(result.recoveredErrorRowsCount, 1);
+  assert.equal(result.errorsCount, 0);
   assert.equal(result.listings[0].phoneNumber, '09121085083');
   assert.equal(result.listings[0].imageFileName, '989121085083_1175.txt');
   assert.equal(result.listings[0].rowIndex, 12);
@@ -123,9 +125,10 @@ test('parseSellersJson parses user exact JSON format properly', () => {
     ],
   };
 
-  const { listings, errorsCount } = parseSellersJson(samplePayload);
+  const { listings, errorsCount, recoveredErrorRowsCount } = parseSellersJson(samplePayload);
 
   assert.equal(errorsCount, 0);
+  assert.equal(recoveredErrorRowsCount, 1);
   assert.equal(listings.length, 4);
 
   // A recoverable row marked error is retained and gets its phone from filename.
