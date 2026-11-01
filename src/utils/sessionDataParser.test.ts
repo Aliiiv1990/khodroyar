@@ -211,6 +211,9 @@ test('parseZipArchive extracts session.json and maps data/{id} images', async ()
   assert.equal(textListing.isTextOnly, true);
   assert.equal(textListing.description, 'متن کامل آگهی از مسیر data/id');
   assert.equal(result.retainedErrorRowsCount, 0);
+  assert.equal(result.orphanMediaFilesCount, 2);
+  assert.ok(result.orphanMediaFileNames.includes('data/another-image.jpg'));
+  assert.ok(result.orphanMediaFileNames.includes('989121234567_1234.txt'));
   assert.ok(result.listings[0].imageFullBase64.startsWith('data:image/jpeg;base64,'));
 });
 
