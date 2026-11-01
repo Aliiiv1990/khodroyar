@@ -588,12 +588,14 @@ export async function parseZipArchive(
 
   // Resolve extensionless data/{id} payloads using the source record type.
   // TXT-only records may store their text body under data/{id} without a .txt extension.
-  const textOnlyRecordIds = new Set(
-    [...(sessionObj.sellers || []), ...(sessionObj.buyers || [])]
-      .filter((item) => item.imageFileName?.toLowerCase().endsWith('.txt'))
-      .map((item) => item.id)
-      .filter((id): id is string => Boolean(id))
-  );
+  const textOnlyRecordIds = new Set<string>();
+  for (const item of [...(sessionObj.sellers || []), ...(sessionObj.buyers || [])]) {
+    if (!item.imageFileName?.toLowerCase().endsWith('.txt')) continue;
+    if (item.id) textOnlyRecordIds.add(item.id);
+    const sourceFileName = item.imageFileName.split(/[\\/]/).pop() || item.imageFileName;
+    const sourceFileStem = sourceFileName.replace(/\\.[^/.]+$/, '');
+    if (sourceFileStem) textOnlyRecordIds.add(sourceFileStem);
+  }
 
   for (const entry of extensionlessDataEntries) {
     const baseName = entry.name.replace(/\\/g, '/').split('/').pop() || entry.name;
