@@ -137,10 +137,10 @@ export function formatIranianPhone(rawPhone?: string | number): string {
 export function extractFilenameDescription(fileName?: string, fallbackText = ''): string {
   if (!fileName || fileName === 'ورودی دستی') return fallbackText.trim();
   const baseName = fileName.split(/[\\/]/).pop() || fileName;
-  let caption = baseName.replace(/\\.[a-zA-Z0-9]+$/i, '');
-  caption = caption.replace(/^\\d{10,13}_\\d{4}(?:_|$)/, '');
-  caption = caption.replace(/^\\d{10,13}_/, '');
-  caption = caption.replace(/_/g, ' ').replace(/\\s+/g, ' ').trim();
+  let caption = baseName.replace(/\.[a-zA-Z0-9]+$/i, '');
+  caption = caption.replace(/^\d{10,13}_\d{4}(?:_|$)/, '');
+  caption = caption.replace(/^\d{10,13}_/, '');
+  caption = caption.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
   return caption || fallbackText.trim();
 }
 
