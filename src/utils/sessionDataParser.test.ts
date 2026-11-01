@@ -197,7 +197,7 @@ test('parseZipArchive extracts session.json and maps data/{id} images', async ()
   // Add a fake jpeg in data/{id}
   zip.file('data/550e8400-e29b-41d4-a716-446655440000', 'fake-image-bytes');
   zip.file('data/another-image.jpg', 'fake-jpeg-bytes');
-  zip.file('data/text-record-id', 'متن کامل آگهی از مسیر data/id');
+  zip.file('data/989125937707_5614', 'متن کامل آگهی از مسیر data/id');
   zip.file('989121234567_1234.txt', 'متن آزمایشی آگهی');
 
   const zipBuffer = await zip.generateAsync({ type: 'uint8array' });
