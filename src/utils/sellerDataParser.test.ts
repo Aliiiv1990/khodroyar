@@ -59,6 +59,25 @@ test('detectBrand recognizes Iranian and imported car brands', () => {
   assert.equal(detectBrand('هیوندای پالیسید'), 'هیوندای');
 });
 
+test('parseSellersJson retains recoverable error rows with phone-bearing filenames', () => {
+  const result = parseSellersJson({
+    sellers: [
+      {
+        id: 'recoverable',
+        rowIndex: 12,
+        imageFileName: '989121085083_1175.txt',
+        status: 'error',
+        errorMessage: 'نوع آگهی نامشخص یا لیست خودروها خالی بود.',
+      },
+    ],
+  });
+
+  assert.equal(result.listings.length, 1);
+  assert.equal(result.listings[0].phoneNumber, '09121085083');
+  assert.equal(result.listings[0].imageFileName, '989121085083_1175.txt');
+  assert.equal(result.listings[0].rowIndex, 12);
+});
+
 test('parseSellersJson parses user exact JSON format properly', () => {
   const samplePayload = {
     version: 2,
