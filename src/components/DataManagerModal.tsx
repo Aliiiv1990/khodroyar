@@ -204,6 +204,12 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
     count: number;
     sellersCount: number;
     buyersCount: number;
+    retainedErrorRowsCount?: number;
+    errorsCount?: number;
+    extractedImagesCount?: number;
+    extractedTextFilesCount?: number;
+    orphanMediaFilesCount?: number;
+    orphanMediaFileNames?: string[];
   } | null>(null);
   const [publishingBatchName, setPublishingBatchName] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -727,12 +733,22 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
           count: result.listings.length,
           sellersCount: result.sellersCount,
           buyersCount: result.buyersCount,
+          retainedErrorRowsCount: result.retainedErrorRowsCount,
+          errorsCount: result.errorsCount,
+          extractedImagesCount: result.extractedImagesCount,
+          extractedTextFilesCount: result.extractedTextFilesCount,
+          orphanMediaFilesCount: result.orphanMediaFilesCount,
+          orphanMediaFileNames: result.orphanMediaFileNames,
         });
 
+        const orphanFileSummary = result.orphanMediaFilesCount > 0
+          ? ` (نمونه: ${result.orphanMediaFileNames.slice(0, 5).join('، ')})`
+          : '';
+
         setImportStatus(
-          `آرشیو زیپ (${file.name}) اضافه شد: ${toPersianDigits(result.sellersCount)} خودرو فروشی، ${toPersianDigits(
+          `آرشیو زیپ (${file.name}) اضافه شد: ${toPersianDigits(result.sellersCount)} رکورد فروش، ${toPersianDigits(
             result.buyersCount
-          )} سفارش خرید آماده انتشار در لیارا هستند (فایل‌های قبلی حفظ شدند).`
+          )} سفارش خرید آماده انتشار در لیارا هستند (فایل‌های قبلی حفظ شدند). ${toPersianDigits(result.retainedErrorRowsCount)} ردیف دارای وضعیت خطا و اطلاعات منبع نگه داشته شد؛ ${toPersianDigits(result.errorsCount)} رکورد غیرقابل‌بازیابی کنار گذاشته شد. ${toPersianDigits(result.extractedImagesCount)} فایل تصویری و ${toPersianDigits(result.extractedTextFilesCount)} فایل متنی استخراج شد. ${toPersianDigits(result.orphanMediaFilesCount)} فایل رسانه‌ای بدون رکورد متناظر در session.json پیدا شد${orphanFileSummary}.`
         );
         setIsSuccess(true);
         setActiveTab('liara');
@@ -1241,7 +1257,7 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
                               </span>
                             </div>
                             <p className="text-[11px] text-emerald-800 font-medium mt-0.5">
-                              شامل {toPersianDigits(newlyImportedBatch.count)} آگهی ({toPersianDigits(newlyImportedBatch.sellersCount)} فروشنده + {toPersianDigits(newlyImportedBatch.buyersCount)} خریدار)
+                              شامل {toPersianDigits(newlyImportedBatch.count)} آگهی ({toPersianDigits(newlyImportedBatch.sellersCount)} رکورد فروش + {toPersianDigits(newlyImportedBatch.buyersCount)} درخواست خرید)
                             </p>
                           </div>
                         </div>

@@ -27,6 +27,7 @@ export interface CarListing {
   creatorName?: string; // Optional name or username of person who submitted
   rowIndex?: number;
   imageFileName?: string;
+  sourceCode?: string;
   status?: string;
   // Batch and origin tracking for admin deletion and date management
   importBatchName?: string; // e.g. "archive_28oct.zip" or "ورودی روز شنبه"

@@ -82,9 +82,10 @@ test('parseSessionJson parses both sellers and buyers correctly', () => {
     ],
   };
 
-  const { listings, sellersCount, buyersCount, errorsCount } = parseSessionJson(sessionData);
+  const { listings, sellersCount, buyersCount, errorsCount, retainedErrorRowsCount } = parseSessionJson(sessionData);
 
   assert.equal(errorsCount, 1);
+  assert.equal(retainedErrorRowsCount, 0);
   assert.equal(sellersCount, 1);
   assert.equal(buyersCount, 1);
   assert.equal(listings.length, 2);
@@ -105,6 +106,70 @@ test('parseSessionJson parses both sellers and buyers correctly', () => {
   assert.ok(buyerListing.description.includes('خریدار فوری'));
 });
 
+test('filename metadata is separated from image caption and attached text wins for TXT ads', () => {
+  const { listings, retainedErrorRowsCount } = parseSessionJson({
+    sellers: [
+      {
+        id: 'image-ad',
+        imageFileName: '989121447370_9842_95_کمکار_۲_لکه_بین_در_و_گلگیر.jpg',
+        status: 'success',
+        اسم_ماشین: 'سراتو',
+      },
+      {
+        id: 'image-no-caption',
+        imageFileName: '989121952420_6815.jpg',
+        status: 'success',
+        اسم_ماشین: 'پژو ۲۰۷',
+        رنگ: 'سفید',
+      },
+      {
+        id: 'long-numeric-prefix',
+        imageFileName: '191804867641352_9499_Rx_350_2013_بدون_رنگ_صافکاری_دارد_موتور_و_فنی_به_ض.jpg',
+        status: 'success',
+        اسم_ماشین: 'لکسوس RX 350',
+      },
+      {
+        id: 'text-ad',
+        imageFileName: '989125937707_5614.txt',
+        status: 'success',
+        اسم_ماشین: 'دنا',
+      },
+      {
+        id: 'recoverable-error',
+        imageFileName: '989121085083_1175.txt',
+        status: 'error',
+      },
+    ],
+  }, new Map(), new Map([
+    ['989125937707_5614', 'متن کامل آگهی از فایل تکست'],
+    ['989125937707_5614.txt', 'متن کامل آگهی از فایل تکست'],
+  ]));
+
+  const imageAd = listings.find((item) => item.id === 'image-ad')!;
+  assert.equal(imageAd.phoneNumber, '09121447370');
+  assert.equal(imageAd.fileDescription, '95 کمکار ۲ لکه بین در و گلگیر');
+  assert.equal(imageAd.description, imageAd.fileDescription);
+
+  const noCaptionAd = listings.find((item) => item.id === 'image-no-caption')!;
+  assert.equal(noCaptionAd.phoneNumber, '09121952420');
+  assert.equal(noCaptionAd.fileDescription, '');
+  assert.equal(noCaptionAd.description, '');
+
+  const longPrefixAd = listings.find((item) => item.id === 'long-numeric-prefix')!;
+  assert.equal(longPrefixAd.phoneNumber, 'ثبت نشده');
+  assert.equal(longPrefixAd.fileDescription, 'Rx 350 2013 بدون رنگ صافکاری دارد موتور و فنی به ض');
+
+  const textAd = listings.find((item) => item.id === 'text-ad')!;
+  assert.equal(textAd.phoneNumber, '09125937707');
+  assert.equal(textAd.fileDescription, 'متن کامل آگهی از فایل تکست');
+  assert.equal(textAd.isTextOnly, true);
+
+  const recoverable = listings.find((item) => item.id === 'recoverable-error')!;
+  assert.ok(recoverable);
+  assert.equal(recoverable.phoneNumber, '09121085083');
+  assert.equal(retainedErrorRowsCount, 1);
+});
+
 test('parseZipArchive extracts session.json and maps data/{id} images', async () => {
   const zip = new JSZip();
 
@@ -119,19 +184,36 @@ test('parseZipArchive extracts session.json and maps data/{id} images', async ()
         اسم_فروشنده: '989123334455',
         قیمت_تومان: '۶۰۰,۰۰۰,۰۰۰',
       },
+      {
+        id: 'text-record-id',
+        imageFileName: '989125937707_5614.txt',
+        status: 'success',
+        اسم_ماشین: 'دنا',
+      },
     ],
   };
 
   zip.file('session.json', JSON.stringify(sessionJson));
   // Add a fake jpeg in data/{id}
   zip.file('data/550e8400-e29b-41d4-a716-446655440000', 'fake-image-bytes');
+  zip.file('data/another-image.jpg', 'fake-jpeg-bytes');
+  zip.file('data/989125937707_5614', 'متن کامل آگهی از مسیر data/id');
+  zip.file('989121234567_1234.txt', 'متن آزمایشی آگهی');
 
   const zipBuffer = await zip.generateAsync({ type: 'uint8array' });
   const result = await parseZipArchive(zipBuffer);
 
-  assert.equal(result.sellersCount, 1);
-  assert.equal(result.listings.length, 1);
-  assert.equal(result.extractedImagesCount, 1);
+  assert.equal(result.sellersCount, 2);
+  assert.equal(result.listings.length, 2);
+  assert.equal(result.extractedImagesCount, 2);
+  assert.equal(result.extractedTextFilesCount, 2);
+  const textListing = result.listings.find((listing) => listing.id === 'text-record-id')!;
+  assert.equal(textListing.isTextOnly, true);
+  assert.equal(textListing.description, 'متن کامل آگهی از مسیر data/id');
+  assert.equal(result.retainedErrorRowsCount, 0);
+  assert.equal(result.orphanMediaFilesCount, 2);
+  assert.ok(result.orphanMediaFileNames.includes('data/another-image.jpg'));
+  assert.ok(result.orphanMediaFileNames.includes('989121234567_1234.txt'));
   assert.ok(result.listings[0].imageFullBase64.startsWith('data:image/jpeg;base64,'));
 });
 

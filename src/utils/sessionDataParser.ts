@@ -2,7 +2,7 @@ import JSZip from 'jszip';
 import { CarListing, CarListingType } from '../types/car';
 import { normalizePersianText, buildSearchIndex } from './persianSearch';
 import { toPersianDigits, formatTomanPrice } from './dataPruner';
-import { formatIranianPhone, extractIranianPhone, parseCarYear, extractCarAttributes, detectBrand } from './sellerDataParser';
+import { formatIranianPhone, extractIranianPhone, parseCarYear, extractCarAttributes, detectBrand, extractFilenameCode } from './sellerDataParser';
 
 export interface RawSellerRecord {
   id: string;
@@ -60,31 +60,31 @@ export function extractCleanFileDescription(
 ): string {
   if (customNote && customNote.trim()) return customNote.trim();
 
-  // If color contains details (e.g. "۲۰۷ پانا ۴۰۳ سفید ۴۰ تا کار. اتومات")
-  if (
-    rawColor &&
-    rawColor.trim().length > 3 &&
-    !/^(سفید|مشکی|قرمز|آبی|نقره‌ای|خاکستری|دلفینی)$/.test(rawColor.trim())
-  ) {
-    return rawColor.trim();
-  }
+  // Prefer the actual filename caption. Keep every character/digit in it;
+  // only the leading phone + four-digit code are parsed as metadata.
 
   if (!fileName || fileName === 'ورودی دستی') {
     return rawColor?.trim() || '';
   }
 
-  // Strip extension
-  let cleaned = fileName.replace(/\.[a-zA-Z0-9]+$/i, '');
-  // Strip leading phone prefix and row index (e.g. 98912..._1234_)
-  cleaned = cleaned.replace(/^\d{10,13}_\d+_/, '').replace(/^\d{10,13}_/, '');
+  // Strip extension and the exact filename metadata convention:
+  // phone number + underscore + four-digit random code + optional caption.
+  let cleaned = fileName.split(/[\\/]/).pop() || fileName;
+  cleaned = cleaned.replace(/\.[a-zA-Z0-9]+$/i, '');
+  const hasPhoneAndFourDigitCode = /^\d+_\d{4}(?:_|$)/.test(cleaned);
+  if (hasPhoneAndFourDigitCode) {
+    cleaned = cleaned.replace(/^\d+_\d{4}(?:_|$)/, '');
+  } else {
+    // Backward compatibility for older files that used a non-four-digit suffix.
+    cleaned = cleaned.replace(/^\d+_\d+_/, '').replace(/^\d+_/, '');
+  }
   // Replace underscores with spaces
   cleaned = cleaned.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
 
-  if (/^\d+$/.test(cleaned)) {
-    return rawColor?.trim() || fileName;
-  }
+  if (/^\d+$/.test(cleaned)) return '';
 
-  return cleaned || fileName;
+  // A filename containing only phone + random code has no caption; never expose metadata.
+  return cleaned;
 }
 
 /**
@@ -181,11 +181,13 @@ export function parseSessionJson(
   sellersCount: number;
   buyersCount: number;
   errorsCount: number;
+  retainedErrorRowsCount: number;
 } {
   const listings: CarListing[] = [];
   let sellersCount = 0;
   let buyersCount = 0;
   let errorsCount = 0;
+  let retainedErrorRowsCount = 0;
   const now = Date.now();
   const currentDateFa = new Date().toLocaleDateString('fa-IR');
 
@@ -196,6 +198,20 @@ export function parseSessionJson(
     for (let i = 0; i < sessionData.sellers.length; i++) {
       const item = sessionData.sellers[i];
       if (!item) continue;
+
+      // Preserve error-marked source rows when any source identity is still available.
+      // Keep a separate counter so recovered rows are not confused with clean rows.
+      if (item.status === 'error') {
+        const hasSourceIdentity = Boolean(
+          item.imageFileName || item.اسم_فروشنده || item.فروشنده ||
+          item.شماره_تماس || item.تلفن || item.phone || item.mobile
+        );
+        if (!hasSourceIdentity) {
+          errorsCount++;
+          continue;
+        }
+        retainedErrorRowsCount++;
+      }
 
       const rawCarName = (
         item.اسم_ماشین ||
@@ -211,7 +227,8 @@ export function parseSessionJson(
         ''
       ).toString().trim();
 
-      if (!rawCarName && !item.imageFileName && !item.اسم_فروشنده && !item.فروشنده) {
+      if (!rawCarName && !item.imageFileName && !item.اسم_فروشنده && !item.فروشنده &&
+          !item.شماره_تماس && !item.تلفن && !item.phone && !item.mobile) {
         errorsCount++;
         continue;
       }
@@ -220,13 +237,13 @@ export function parseSessionJson(
       const year = parseCarYear(item.سال_ساخت || item.سال || item.year);
       const brand = detectBrand(standardCarName);
       const sellerPhone = extractIranianPhone(
+        item.imageFileName,
         item.اسم_فروشنده,
         item.فروشنده,
         item.شماره_تماس,
         item.تلفن,
         item.phone,
         item.mobile,
-        item.imageFileName,
         item.id,
         item.توضیحات,
         item.توضیحات_بیشتر
@@ -243,17 +260,25 @@ export function parseSessionJson(
 
       // Check if text-only file content is available from data/{id} or imageFileName
       const id = item.id || `seller-${i}`;
-      const attachedText = textMap.get(id) || textMap.get(item.imageFileName || '');
+      const attachedText =
+        textMap.get(id) ||
+        textMap.get(item.imageFileName || '') ||
+        textMap.get((item.imageFileName || '').replace(/\.[^/.]+$/, ''));
       const isTextOnly = Boolean(
         attachedText ||
-        item.imageFileName?.endsWith('.txt') ||
+        item.imageFileName?.toLowerCase().endsWith('.txt') ||
         item.imageFileName === 'ورودی دستی'
       );
 
       // Clean file description text (e.g. ۲۰۷ پانا ۴۰۳ سفید ۴۰ تا کار اتومات)
-      const fileDescription =
-        attachedText ||
-        extractCleanFileDescription(item.imageFileName, item.رنگ, attrs.notes);
+      const filenameCaption = extractCleanFileDescription(
+        item.imageFileName,
+        item.رنگ,
+        ''
+      );
+      const fileDescription = isTextOnly && attachedText?.trim()
+        ? attachedText.trim()
+        : (filenameCaption || attachedText?.trim() || item.توضیحات || item.توضیحات_بیشتر || '');
 
       // Resolve image: look up in imageMap by id or imageFileName
       let imageSrc = imageMap.get(id) || imageMap.get(item.imageFileName || '');
@@ -261,12 +286,8 @@ export function parseSessionJson(
         imageSrc = createCarPlaceholder(attrs.colorHex, standardCarName, false);
       }
 
-      const description = [
-        fileDescription,
-        item.imageFileName && item.imageFileName !== 'ورودی دستی' ? `نام فایل منبع: ${item.imageFileName}` : '',
-      ]
-        .filter(Boolean)
-        .join('\n');
+      // Keep filename phone/code metadata out of the visible ad text.
+      const description = fileDescription;
 
       const listing: CarListing = {
         id: id,
@@ -288,6 +309,10 @@ export function parseSessionJson(
         description,
         fileDescription,
         isTextOnly,
+        rowIndex: item.rowIndex,
+        imageFileName: item.imageFileName,
+        sourceCode: extractFilenameCode(item.imageFileName),
+        status: item.status || 'success',
         importBatchName: batchName,
         importDate: currentDateFa,
         createdAt: new Date(now - (i % 4) * 3600000 * 8).toISOString(),
@@ -428,7 +453,7 @@ export function parseSessionJson(
     }
   }
 
-  return { listings, sellersCount, buyersCount, errorsCount };
+  return { listings, sellersCount, buyersCount, errorsCount, retainedErrorRowsCount };
 }
 
 /**
@@ -444,6 +469,10 @@ export async function parseZipArchive(
   buyersCount: number;
   errorsCount: number;
   extractedImagesCount: number;
+  extractedTextFilesCount: number;
+  retainedErrorRowsCount: number;
+  orphanMediaFilesCount: number;
+  orphanMediaFileNames: string[];
 }> {
   const zip = new JSZip();
   const loadedZip = await zip.loadAsync(file);
@@ -451,6 +480,10 @@ export async function parseZipArchive(
   const imageMap = new Map<string, string>();
   const textMap = new Map<string, string>();
   const jsonFiles: JSZip.JSZipObject[] = [];
+  const extensionlessDataEntries: JSZip.JSZipObject[] = [];
+  const archiveMediaFileNames: string[] = [];
+  let extractedImagesCount = 0;
+  let extractedTextFilesCount = 0;
   const fileNames = Object.keys(loadedZip.files);
 
   for (const name of fileNames) {
@@ -473,14 +506,26 @@ export async function parseZipArchive(
         const textContent = await entry.async('string');
         textMap.set(idWithoutExt, textContent);
         textMap.set(baseName, textContent);
+        extractedTextFilesCount++;
+        archiveMediaFileNames.push(name);
       } catch (err) {
         console.warn('Failed to extract text entry from zip:', name, err);
       }
       continue;
     }
 
-    // Check for media in data/ or matching image extensions
-    if (name.startsWith('data/') || /\.(jpg|jpeg|png|webp|svg)$/i.test(baseName)) {
+    // Keep extensionless data/{id} entries until session.json tells us whether
+    // each one is an image or the attached text body of a TXT-only listing.
+    const normalizedZipPath = name.replace(/\\/g, '/');
+    const isDataPath = normalizedZipPath.split('/').includes('data');
+    const hasFileExtension = /\.[^/.]+$/.test(baseName);
+    if (isDataPath && !hasFileExtension) {
+      extensionlessDataEntries.push(entry);
+      continue;
+    }
+
+    // Extract only recognized image formats; do not treat every file in data/ as an image.
+    if (/\.(jpg|jpeg|png|webp|svg)$/i.test(baseName)) {
       try {
         const ext = baseName.split('.').pop()?.toLowerCase() || 'jpg';
         const mimeType = ext === 'png' ? 'image/png' : ext === 'svg' ? 'image/svg+xml' : 'image/jpeg';
@@ -489,6 +534,8 @@ export async function parseZipArchive(
 
         imageMap.set(idWithoutExt, dataUrl);
         imageMap.set(baseName, dataUrl);
+        extractedImagesCount++;
+        archiveMediaFileNames.push(name);
       } catch (err) {
         console.warn('Failed to extract image entry from zip:', name, err);
       }
@@ -543,12 +590,68 @@ export async function parseZipArchive(
     }
   }
 
+  // Resolve extensionless data/{id} payloads using the source record type.
+  // TXT-only records may store their text body under data/{id} without a .txt extension.
+  const textOnlyRecordIds = new Set<string>();
+  for (const item of [...(sessionObj.sellers || []), ...(sessionObj.buyers || [])]) {
+    if (!item.imageFileName?.toLowerCase().endsWith('.txt')) continue;
+    if (item.id) textOnlyRecordIds.add(item.id);
+    const sourceFileName = item.imageFileName.split(/[\\/]/).pop() || item.imageFileName;
+    const sourceFileStem = sourceFileName.replace(/\.[^/.]+$/, '');
+    if (sourceFileStem) textOnlyRecordIds.add(sourceFileStem);
+  }
+
+  for (const entry of extensionlessDataEntries) {
+    const baseName = entry.name.replace(/\\/g, '/').split('/').pop() || entry.name;
+    try {
+      if (textOnlyRecordIds.has(baseName)) {
+        const textContent = await entry.async('string');
+        textMap.set(baseName, textContent);
+        extractedTextFilesCount++;
+      } else {
+        const base64 = await entry.async('base64');
+        const dataUrl = `data:image/jpeg;base64,${base64}`;
+        imageMap.set(baseName, dataUrl);
+        extractedImagesCount++;
+      }
+      archiveMediaFileNames.push(entry.name);
+    } catch (err) {
+      console.warn('Failed to extract extensionless data entry from zip:', entry.name, err);
+    }
+  }
+
+  // Detect media files that have no matching seller/buyer record in session.json.
+  const referencedSourceKeys = new Set<string>();
+  const addSourceReference = (sourceName?: string) => {
+    if (!sourceName) return;
+    const normalized = sourceName.replace(/\\/g, '/');
+    const baseName = normalized.split('/').pop() || normalized;
+    const stem = baseName.replace(/\.[^/.]+$/, '');
+    if (baseName) referencedSourceKeys.add(baseName);
+    if (stem) referencedSourceKeys.add(stem);
+  };
+
+  for (const item of [...(sessionObj.sellers || []), ...(sessionObj.buyers || [])]) {
+    if (item.id) referencedSourceKeys.add(item.id);
+    addSourceReference(item.imageFileName);
+  }
+
+  const orphanMediaFileNames = archiveMediaFileNames.filter((filePath) => {
+    const baseName = filePath.replace(/\\/g, '/').split('/').pop() || filePath;
+    const stem = baseName.replace(/\.[^/.]+$/, '');
+    return !referencedSourceKeys.has(baseName) && !referencedSourceKeys.has(stem);
+  });
+
   const batchName = customBatchName || (file && 'name' in file && typeof (file as any).name === 'string' ? (file as any).name : 'بسته فایل زیپ');
   const result = parseSessionJson(sessionObj, imageMap, textMap, batchName);
 
   return {
     ...result,
-    extractedImagesCount: imageMap.size,
+    extractedImagesCount,
+    extractedTextFilesCount,
+    retainedErrorRowsCount: result.retainedErrorRowsCount,
+    orphanMediaFilesCount: orphanMediaFileNames.length,
+    orphanMediaFileNames: orphanMediaFileNames.slice(0, 20),
   };
 }
 

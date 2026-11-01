@@ -19,6 +19,13 @@ export interface RawSellerItem {
   year?: string | number;
   color?: string;
   sellerPhone?: string;
+  phone?: string;
+  mobile?: string;
+  فروشنده?: string;
+  شماره_تماس?: string;
+  تلفن?: string;
+  توضیحات?: string;
+  توضیحات_بیشتر?: string;
   price?: number;
   priceFormatted?: string;
   description?: string;
@@ -131,6 +138,30 @@ function isValidIranian11DigitNumber(num: string): boolean {
 export function formatIranianPhone(rawPhone?: string | number): string {
   if (!rawPhone) return 'ثبت نشده';
   return extractIranianPhone(rawPhone);
+}
+
+/** Extract the four-digit source listing code without losing it in the description. */
+export function extractFilenameCode(fileName?: string): string {
+  if (!fileName || fileName === 'ورودی دستی') return '';
+  const baseName = fileName.split(/[\\/]/).pop() || fileName;
+  const stem = baseName.replace(/\.[a-zA-Z0-9]+$/i, '');
+  const match = stem.match(/^\d+_(\d{4})(?:_|$)/);
+  return match?.[1] || '';
+}
+
+/** Extract the human-written caption from phone_code_caption.ext filenames. */
+export function extractFilenameDescription(fileName?: string, fallbackText = ''): string {
+  if (!fileName || fileName === 'ورودی دستی') return fallbackText.trim();
+  const baseName = fileName.split(/[\\/]/).pop() || fileName;
+  let caption = baseName.replace(/\.[a-zA-Z0-9]+$/i, '');
+  const hasPhoneAndFourDigitCode = /^\d+_\d{4}(?:_|$)/.test(caption);
+  if (hasPhoneAndFourDigitCode) {
+    caption = caption.replace(/^\d+_\d{4}(?:_|$)/, '');
+  } else {
+    caption = caption.replace(/^\d+_\d+_/, '').replace(/^\d+_/, '');
+  }
+  caption = caption.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+  return caption || fallbackText.trim();
 }
 
 /**
@@ -334,6 +365,7 @@ export function detectBrand(carName: string): string {
 export function parseSellersJson(inputJson: string | object): {
   listings: CarListing[];
   errorsCount: number;
+  retainedErrorRowsCount: number;
 } {
   let data: any = inputJson;
   if (typeof inputJson === 'string') {
@@ -363,16 +395,22 @@ export function parseSellersJson(inputJson: string | object): {
 
   const listings: CarListing[] = [];
   let errorsCount = 0;
+  let retainedErrorRowsCount = 0;
   const now = Date.now();
 
   for (let i = 0; i < rawList.length; i++) {
     const raw = rawList[i];
 
-    // Skip items explicitly marked with status === 'error' or missing critical fields
+    // Preserve error-marked rows when source identity remains available.
     if (raw.status === 'error') {
-      errorsCount++;
-      // Still, if it has a phone and imageFileName we could optionally skip or ignore
-      continue;
+      const hasSourceIdentity = Boolean(
+        raw.imageFileName || raw.اسم_فروشنده || raw.sellerPhone || raw.phone || raw.mobile
+      );
+      if (!hasSourceIdentity) {
+        errorsCount++;
+        continue;
+      }
+      retainedErrorRowsCount++;
     }
 
     const rawCarName = (raw.اسم_ماشین || raw.title || raw.carName || '').trim();
@@ -384,10 +422,11 @@ export function parseSellersJson(inputJson: string | object): {
     const carName = rawCarName || 'خودرو فروشی';
     const year = parseCarYear(raw.سال_ساخت || raw.year);
     const brand = detectBrand(carName);
+    // The leading phone number in the original filename is authoritative.
     const sellerPhone = extractIranianPhone(
+      raw.imageFileName,
       raw.اسم_فروشنده,
       raw.sellerPhone,
-      raw.imageFileName,
       raw.id,
       raw.description
     );
@@ -407,21 +446,19 @@ export function parseSellersJson(inputJson: string | object): {
     const mileage = mileageMatch ? parseInt(mileageMatch[1], 10) * 1000 : 0;
     const mileageFormatted = mileage > 0 ? `${toPersianDigits(mileage.toLocaleString('en-US'))} کیلومتر` : 'کارشناسی نشده';
 
-    // Description
-    const description = [
-      attrs.notes,
-      raw.imageFileName ? `فایل مرجع: ${raw.imageFileName}` : '',
-      `فروشنده مستقیم: ${sellerPhone}`,
-    ]
-      .filter(Boolean)
-      .join('\n');
+    // Keep the ad caption/content separate from filename metadata (phone and code).
+    const isTextOnly = Boolean(raw.imageFileName?.toLowerCase().endsWith('.txt') || raw.imageFileName === 'ورودی دستی');
+    const fileDescription = isTextOnly && raw.description?.trim()
+      ? raw.description.trim()
+      : extractFilenameDescription(
+          raw.imageFileName,
+          raw.description || raw.توضیحات || raw.رنگ || raw.color || ''
+        );
+    const description = fileDescription;
 
     // Base64 SVGs
     const thumbnail = raw.imageThumbnailBase64 || createImportedCarSvg(attrs.colorHex, carName, false);
     const fullImage = raw.imageFullBase64 || createImportedCarSvg(attrs.colorHex, carName, true);
-
-    const isTextOnly = Boolean(raw.imageFileName?.endsWith('.txt') || raw.imageFileName === 'ورودی دستی');
-    const fileDescription = attrs.notes || raw.imageFileName || '';
 
     const listing: CarListing = {
       id: raw.id || `seller-${Date.now()}-${i}`,
@@ -443,6 +480,10 @@ export function parseSellersJson(inputJson: string | object): {
       description,
       fileDescription,
       isTextOnly,
+      rowIndex: raw.rowIndex,
+      imageFileName: raw.imageFileName,
+      sourceCode: extractFilenameCode(raw.imageFileName),
+      status: raw.status || 'success',
       createdAt: raw.createdAt || new Date(now - (i % 3) * 3600000 * 12).toISOString(),
       imageThumbnailBase64: thumbnail,
       imageFullBase64: fullImage,
@@ -452,5 +493,5 @@ export function parseSellersJson(inputJson: string | object): {
     listings.push(listing);
   }
 
-  return { listings, errorsCount };
+  return { listings, errorsCount, retainedErrorRowsCount };
 }
