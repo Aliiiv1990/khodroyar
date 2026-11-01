@@ -73,9 +73,12 @@ export function extractCleanFileDescription(
     return rawColor?.trim() || '';
   }
 
-  // Strip extension
-  let cleaned = fileName.replace(/\.[a-zA-Z0-9]+$/i, '');
-  // Strip leading phone prefix and row index (e.g. 98912..._1234_)
+  // Strip extension and the exact filename metadata convention:
+  // phone number + underscore + four-digit random code + optional caption.
+  let cleaned = fileName.split(/[\\/]/).pop() || fileName;
+  cleaned = cleaned.replace(/\.[a-zA-Z0-9]+$/i, '');
+  cleaned = cleaned.replace(/^\d{10,13}_\d{4}(?:_|$)/, '');
+  // Backward compatibility for older files that used a non-four-digit suffix.
   cleaned = cleaned.replace(/^\d{10,13}_\d+_/, '').replace(/^\d{10,13}_/, '');
   // Replace underscores with spaces
   cleaned = cleaned.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
@@ -197,6 +200,13 @@ export function parseSessionJson(
       const item = sessionData.sellers[i];
       if (!item) continue;
 
+      // Preserve rows previously marked as failed when their filename still
+      // contains the source phone and enough metadata to create a searchable ad.
+      if (item.status === 'error' && !item.imageFileName && !item.اسم_فروشنده && !item.شماره_تماس) {
+        errorsCount++;
+        continue;
+      }
+
       const rawCarName = (
         item.اسم_ماشین ||
         item.ماشین ||
@@ -220,13 +230,13 @@ export function parseSessionJson(
       const year = parseCarYear(item.سال_ساخت || item.سال || item.year);
       const brand = detectBrand(standardCarName);
       const sellerPhone = extractIranianPhone(
+        item.imageFileName,
         item.اسم_فروشنده,
         item.فروشنده,
         item.شماره_تماس,
         item.تلفن,
         item.phone,
         item.mobile,
-        item.imageFileName,
         item.id,
         item.توضیحات,
         item.توضیحات_بیشتر
@@ -243,7 +253,10 @@ export function parseSessionJson(
 
       // Check if text-only file content is available from data/{id} or imageFileName
       const id = item.id || `seller-${i}`;
-      const attachedText = textMap.get(id) || textMap.get(item.imageFileName || '');
+      const attachedText =
+        textMap.get(id) ||
+        textMap.get(item.imageFileName || '') ||
+        textMap.get((item.imageFileName || '').replace(/\.[^/.]+$/, ''));
       const isTextOnly = Boolean(
         attachedText ||
         item.imageFileName?.endsWith('.txt') ||
@@ -251,9 +264,14 @@ export function parseSessionJson(
       );
 
       // Clean file description text (e.g. ۲۰۷ پانا ۴۰۳ سفید ۴۰ تا کار اتومات)
-      const fileDescription =
-        attachedText ||
-        extractCleanFileDescription(item.imageFileName, item.رنگ, attrs.notes);
+      const filenameCaption = extractCleanFileDescription(
+        item.imageFileName,
+        item.رنگ,
+        ''
+      );
+      const fileDescription = isTextOnly && attachedText?.trim()
+        ? attachedText.trim()
+        : (filenameCaption || attachedText?.trim() || item.توضیحات || item.توضیحات_بیشتر || '');
 
       // Resolve image: look up in imageMap by id or imageFileName
       let imageSrc = imageMap.get(id) || imageMap.get(item.imageFileName || '');
@@ -288,6 +306,9 @@ export function parseSessionJson(
         description,
         fileDescription,
         isTextOnly,
+        rowIndex: item.rowIndex,
+        imageFileName: item.imageFileName,
+        status: item.status || 'success',
         importBatchName: batchName,
         importDate: currentDateFa,
         createdAt: new Date(now - (i % 4) * 3600000 * 8).toISOString(),
