@@ -204,7 +204,7 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
     count: number;
     sellersCount: number;
     buyersCount: number;
-    recoveredErrorRowsCount?: number;
+    retainedErrorRowsCount?: number;
     errorsCount?: number;
     extractedImagesCount?: number;
     extractedTextFilesCount?: number;
@@ -731,7 +731,7 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
           count: result.listings.length,
           sellersCount: result.sellersCount,
           buyersCount: result.buyersCount,
-          recoveredErrorRowsCount: result.recoveredErrorRowsCount,
+          retainedErrorRowsCount: result.retainedErrorRowsCount,
           errorsCount: result.errorsCount,
           extractedImagesCount: result.extractedImagesCount,
           extractedTextFilesCount: result.extractedTextFilesCount,
@@ -740,7 +740,7 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
         setImportStatus(
           `آرشیو زیپ (${file.name}) اضافه شد: ${toPersianDigits(result.sellersCount)} خودرو فروشی، ${toPersianDigits(
             result.buyersCount
-          )} سفارش خرید آماده انتشار در لیارا هستند (فایل‌های قبلی حفظ شدند). ${toPersianDigits(result.recoveredErrorRowsCount)} رکورد دارای وضعیت خطا از روی اطلاعات فایل بازیابی شد؛ ${toPersianDigits(result.errorsCount)} رکورد غیرقابل‌بازیابی کنار گذاشته شد. ${toPersianDigits(result.extractedImagesCount)} فایل تصویری و ${toPersianDigits(result.extractedTextFilesCount)} فایل متنی استخراج شد.`
+          )} سفارش خرید آماده انتشار در لیارا هستند (فایل‌های قبلی حفظ شدند). ${toPersianDigits(result.retainedErrorRowsCount)} ردیف دارای وضعیت خطا و اطلاعات منبع نگه داشته شد؛ ${toPersianDigits(result.errorsCount)} رکورد غیرقابل‌بازیابی کنار گذاشته شد. ${toPersianDigits(result.extractedImagesCount)} فایل تصویری و ${toPersianDigits(result.extractedTextFilesCount)} فایل متنی استخراج شد.`
         );
         setIsSuccess(true);
         setActiveTab('liara');
