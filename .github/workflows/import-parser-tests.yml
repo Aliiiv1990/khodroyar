@@ -7,6 +7,7 @@ on:
       - "src/utils/sessionDataParser.test.ts"
       - "src/utils/sellerDataParser.ts"
       - "src/utils/sellerDataParser.test.ts"
+      - "src/components/DataManagerModal.tsx"
       - "package.json"
       - "bun.lock"
       - ".github/workflows/import-parser-tests.yml"
