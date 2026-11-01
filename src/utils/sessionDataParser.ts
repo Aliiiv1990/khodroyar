@@ -60,14 +60,8 @@ export function extractCleanFileDescription(
 ): string {
   if (customNote && customNote.trim()) return customNote.trim();
 
-  // If color contains details (e.g. "۲۰۷ پانا ۴۰۳ سفید ۴۰ تا کار. اتومات")
-  if (
-    rawColor &&
-    rawColor.trim().length > 3 &&
-    !/^(سفید|مشکی|قرمز|آبی|نقره‌ای|خاکستری|دلفینی)$/.test(rawColor.trim())
-  ) {
-    return rawColor.trim();
-  }
+  // Prefer the actual filename caption. Keep every character/digit in it;
+  // only the leading phone + four-digit code are parsed as metadata.
 
   if (!fileName || fileName === 'ورودی دستی') {
     return rawColor?.trim() || '';
