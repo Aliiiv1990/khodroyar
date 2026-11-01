@@ -597,7 +597,7 @@ export async function parseZipArchive(
     if (!item.imageFileName?.toLowerCase().endsWith('.txt')) continue;
     if (item.id) textOnlyRecordIds.add(item.id);
     const sourceFileName = item.imageFileName.split(/[\\/]/).pop() || item.imageFileName;
-    const sourceFileStem = sourceFileName.replace(/\\.[^/.]+$/, '');
+    const sourceFileStem = sourceFileName.replace(/\.[^/.]+$/, '');
     if (sourceFileStem) textOnlyRecordIds.add(sourceFileStem);
   }
 
