@@ -133,6 +133,17 @@ export function formatIranianPhone(rawPhone?: string | number): string {
   return extractIranianPhone(rawPhone);
 }
 
+/** Extract the human-written caption from phone_code_caption.ext filenames. */
+export function extractFilenameDescription(fileName?: string, fallbackText = ''): string {
+  if (!fileName || fileName === 'ورودی دستی') return fallbackText.trim();
+  const baseName = fileName.split(/[\\/]/).pop() || fileName;
+  let caption = baseName.replace(/\\.[a-zA-Z0-9]+$/i, '');
+  caption = caption.replace(/^\\d{10,13}_\\d{4}(?:_|$)/, '');
+  caption = caption.replace(/^\\d{10,13}_/, '');
+  caption = caption.replace(/_/g, ' ').replace(/\\s+/g, ' ').trim();
+  return caption || fallbackText.trim();
+}
+
 /**
  * Normalizes year (e.g. "82" -> 1382, "۱۴۰۳" -> 1403, "2017" -> 2017)
  */
@@ -368,10 +379,9 @@ export function parseSellersJson(inputJson: string | object): {
   for (let i = 0; i < rawList.length; i++) {
     const raw = rawList[i];
 
-    // Skip items explicitly marked with status === 'error' or missing critical fields
-    if (raw.status === 'error') {
+    // Keep recoverable rows even if an earlier enrichment step marked them as error.
+    if (raw.status === 'error' && !raw.imageFileName && !raw.اسم_فروشنده && !raw.sellerPhone) {
       errorsCount++;
-      // Still, if it has a phone and imageFileName we could optionally skip or ignore
       continue;
     }
 
@@ -384,10 +394,11 @@ export function parseSellersJson(inputJson: string | object): {
     const carName = rawCarName || 'خودرو فروشی';
     const year = parseCarYear(raw.سال_ساخت || raw.year);
     const brand = detectBrand(carName);
+    // The leading phone number in the original filename is authoritative.
     const sellerPhone = extractIranianPhone(
+      raw.imageFileName,
       raw.اسم_فروشنده,
       raw.sellerPhone,
-      raw.imageFileName,
       raw.id,
       raw.description
     );
@@ -407,21 +418,19 @@ export function parseSellersJson(inputJson: string | object): {
     const mileage = mileageMatch ? parseInt(mileageMatch[1], 10) * 1000 : 0;
     const mileageFormatted = mileage > 0 ? `${toPersianDigits(mileage.toLocaleString('en-US'))} کیلومتر` : 'کارشناسی نشده';
 
-    // Description
-    const description = [
-      attrs.notes,
-      raw.imageFileName ? `فایل مرجع: ${raw.imageFileName}` : '',
-      `فروشنده مستقیم: ${sellerPhone}`,
-    ]
-      .filter(Boolean)
-      .join('\n');
+    // Keep the ad caption/content separate from filename metadata (phone and code).
+    const isTextOnly = Boolean(raw.imageFileName?.toLowerCase().endsWith('.txt') || raw.imageFileName === 'ورودی دستی');
+    const fileDescription = isTextOnly && raw.description?.trim()
+      ? raw.description.trim()
+      : extractFilenameDescription(
+          raw.imageFileName,
+          raw.description || raw.توضیحات || raw.رنگ || raw.color || ''
+        );
+    const description = fileDescription;
 
     // Base64 SVGs
     const thumbnail = raw.imageThumbnailBase64 || createImportedCarSvg(attrs.colorHex, carName, false);
     const fullImage = raw.imageFullBase64 || createImportedCarSvg(attrs.colorHex, carName, true);
-
-    const isTextOnly = Boolean(raw.imageFileName?.endsWith('.txt') || raw.imageFileName === 'ورودی دستی');
-    const fileDescription = attrs.notes || raw.imageFileName || '';
 
     const listing: CarListing = {
       id: raw.id || `seller-${Date.now()}-${i}`,
@@ -443,6 +452,9 @@ export function parseSellersJson(inputJson: string | object): {
       description,
       fileDescription,
       isTextOnly,
+      rowIndex: raw.rowIndex,
+      imageFileName: raw.imageFileName,
+      status: raw.status || 'success',
       createdAt: raw.createdAt || new Date(now - (i % 3) * 3600000 * 12).toISOString(),
       imageThumbnailBase64: thumbnail,
       imageFullBase64: fullImage,
