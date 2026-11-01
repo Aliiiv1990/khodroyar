@@ -140,6 +140,15 @@ export function formatIranianPhone(rawPhone?: string | number): string {
   return extractIranianPhone(rawPhone);
 }
 
+/** Extract the four-digit source listing code without losing it in the description. */
+export function extractFilenameCode(fileName?: string): string {
+  if (!fileName || fileName === 'ورودی دستی') return '';
+  const baseName = fileName.split(/[\\/]/).pop() || fileName;
+  const stem = baseName.replace(/\.[a-zA-Z0-9]+$/i, '');
+  const match = stem.match(/^\d+_(\d{4})(?:_|$)/);
+  return match?.[1] || '';
+}
+
 /** Extract the human-written caption from phone_code_caption.ext filenames. */
 export function extractFilenameDescription(fileName?: string, fallbackText = ''): string {
   if (!fileName || fileName === 'ورودی دستی') return fallbackText.trim();
@@ -473,6 +482,7 @@ export function parseSellersJson(inputJson: string | object): {
       isTextOnly,
       rowIndex: raw.rowIndex,
       imageFileName: raw.imageFileName,
+      sourceCode: extractFilenameCode(raw.imageFileName),
       status: raw.status || 'success',
       createdAt: raw.createdAt || new Date(now - (i % 3) * 3600000 * 12).toISOString(),
       imageThumbnailBase64: thumbnail,
