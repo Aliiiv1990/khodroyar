@@ -746,7 +746,7 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
           : '';
 
         setImportStatus(
-          `آرشیو زیپ (${file.name}) اضافه شد: ${toPersianDigits(result.sellersCount)} خودرو فروشی، ${toPersianDigits(
+          `آرشیو زیپ (${file.name}) اضافه شد: ${toPersianDigits(result.sellersCount)} رکورد فروش، ${toPersianDigits(
             result.buyersCount
           )} سفارش خرید آماده انتشار در لیارا هستند (فایل‌های قبلی حفظ شدند). ${toPersianDigits(result.retainedErrorRowsCount)} ردیف دارای وضعیت خطا و اطلاعات منبع نگه داشته شد؛ ${toPersianDigits(result.errorsCount)} رکورد غیرقابل‌بازیابی کنار گذاشته شد. ${toPersianDigits(result.extractedImagesCount)} فایل تصویری و ${toPersianDigits(result.extractedTextFilesCount)} فایل متنی استخراج شد. ${toPersianDigits(result.orphanMediaFilesCount)} فایل رسانه‌ای بدون رکورد متناظر در session.json پیدا شد${orphanFileSummary}.`
         );
@@ -1257,7 +1257,7 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
                               </span>
                             </div>
                             <p className="text-[11px] text-emerald-800 font-medium mt-0.5">
-                              شامل {toPersianDigits(newlyImportedBatch.count)} آگهی ({toPersianDigits(newlyImportedBatch.sellersCount)} فروشنده + {toPersianDigits(newlyImportedBatch.buyersCount)} خریدار)
+                              شامل {toPersianDigits(newlyImportedBatch.count)} آگهی ({toPersianDigits(newlyImportedBatch.sellersCount)} رکورد فروش + {toPersianDigits(newlyImportedBatch.buyersCount)} درخواست خرید)
                             </p>
                           </div>
                         </div>
