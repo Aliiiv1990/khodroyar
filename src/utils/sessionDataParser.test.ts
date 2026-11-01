@@ -82,10 +82,10 @@ test('parseSessionJson parses both sellers and buyers correctly', () => {
     ],
   };
 
-  const { listings, sellersCount, buyersCount, errorsCount, recoveredErrorRowsCount } = parseSessionJson(sessionData);
+  const { listings, sellersCount, buyersCount, errorsCount, retainedErrorRowsCount } = parseSessionJson(sessionData);
 
   assert.equal(errorsCount, 1);
-  assert.equal(recoveredErrorRowsCount, 0);
+  assert.equal(retainedErrorRowsCount, 0);
   assert.equal(sellersCount, 1);
   assert.equal(buyersCount, 1);
   assert.equal(listings.length, 2);
@@ -107,7 +107,7 @@ test('parseSessionJson parses both sellers and buyers correctly', () => {
 });
 
 test('filename metadata is separated from image caption and attached text wins for TXT ads', () => {
-  const { listings, recoveredErrorRowsCount } = parseSessionJson({
+  const { listings, retainedErrorRowsCount } = parseSessionJson({
     sellers: [
       {
         id: 'image-ad',
@@ -156,7 +156,7 @@ test('filename metadata is separated from image caption and attached text wins f
   const recoverable = listings.find((item) => item.id === 'recoverable-error')!;
   assert.ok(recoverable);
   assert.equal(recoverable.phoneNumber, '09121085083');
-  assert.equal(recoveredErrorRowsCount, 1);
+  assert.equal(retainedErrorRowsCount, 1);
 });
 
 test('parseZipArchive extracts session.json and maps data/{id} images', async () => {
@@ -189,7 +189,7 @@ test('parseZipArchive extracts session.json and maps data/{id} images', async ()
   assert.equal(result.listings.length, 1);
   assert.equal(result.extractedImagesCount, 2);
   assert.equal(result.extractedTextFilesCount, 1);
-  assert.equal(result.recoveredErrorRowsCount, 0);
+  assert.equal(result.retainedErrorRowsCount, 0);
   assert.ok(result.listings[0].imageFullBase64.startsWith('data:image/jpeg;base64,'));
 });
 
