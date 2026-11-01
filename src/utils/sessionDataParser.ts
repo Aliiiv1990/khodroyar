@@ -77,9 +77,9 @@ export function extractCleanFileDescription(
   // phone number + underscore + four-digit random code + optional caption.
   let cleaned = fileName.split(/[\\/]/).pop() || fileName;
   cleaned = cleaned.replace(/\.[a-zA-Z0-9]+$/i, '');
-  cleaned = cleaned.replace(/^\d{10,13}_\d{4}(?:_|$)/, '');
+  cleaned = cleaned.replace(/^\d+_\d{4}(?:_|$)/, '');
   // Backward compatibility for older files that used a non-four-digit suffix.
-  cleaned = cleaned.replace(/^\d{10,13}_\d+_/, '').replace(/^\d{10,13}_/, '');
+  cleaned = cleaned.replace(/^\d+_\d+_/, '').replace(/^\d+_/, '');
   // Replace underscores with spaces
   cleaned = cleaned.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
 
