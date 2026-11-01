@@ -125,23 +125,31 @@ test('parseSellersJson parses user exact JSON format properly', () => {
 
   const { listings, errorsCount } = parseSellersJson(samplePayload);
 
-  assert.equal(errorsCount, 1);
-  assert.equal(listings.length, 3);
+  assert.equal(errorsCount, 0);
+  assert.equal(listings.length, 4);
+
+  // A recoverable row marked error is retained and gets its phone from filename.
+  const recovered = listings.find((item) => item.id === 'error-row')!;
+  assert.equal(recovered.phoneNumber, '09126359410');
+  assert.equal(recovered.rowIndex, 1);
 
   // Check item 2
-  assert.equal(listings[0].model, '207');
-  assert.equal(listings[0].year, 1404);
-  assert.equal(listings[0].phoneNumber, '09122959582');
+  const item2 = listings.find((item) => item.id === 'item-2')!;
+  assert.equal(item2.model, '207');
+  assert.equal(item2.year, 1404);
+  assert.equal(item2.phoneNumber, '09122959582');
 
   // Check item 7 (with details extracted from filename/color text)
-  assert.equal(listings[1].phoneNumber, '09121769442');
-  assert.equal(listings[1].gearbox, 'اتوماتیک');
-  assert.equal(listings[1].color, 'سفید');
-  assert.equal(listings[1].mileage, 40000);
+  const item7 = listings.find((item) => item.id === 'item-7')!;
+  assert.equal(item7.phoneNumber, '09121769442');
+  assert.equal(item7.gearbox, 'اتوماتیک');
+  assert.equal(item7.color, 'سفید');
+  assert.equal(item7.mileage, 40000);
 
   // Check item 9 (Xantia year 82 -> 1382)
-  assert.equal(listings[2].model, 'سیتروئن زانتیا');
-  assert.equal(listings[2].year, 1382);
-  assert.equal(listings[2].phoneNumber, '09128360320');
-  assert.equal(listings[2].bodyCondition, 'چند لکه رنگ جزئی، فنی سالم');
+  const item9 = listings.find((item) => item.id === 'item-9')!;
+  assert.equal(item9.model, 'سیتروئن زانتیا');
+  assert.equal(item9.year, 1382);
+  assert.equal(item9.phoneNumber, '09128360320');
+  assert.equal(item9.bodyCondition, 'چند لکه رنگ جزئی، فنی سالم');
 });
