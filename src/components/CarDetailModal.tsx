@@ -246,6 +246,7 @@ export const CarDetailModal: React.FC<CarDetailModalProps> = ({
                       {listing.model}
                       <span className="text-xs font-bold text-slate-100 mr-2 [text-shadow:_0_1px_3px_rgba(0,0,0,0.9)]">
                         مدل {toPersianDigits(listing.year)} • {listing.city}
+                        {listing.sourceCode ? <span className="mr-2 text-amber-200">کد آگهی: {listing.sourceCode}</span> : null}
                       </span>
                     </h2>
                   </div>
