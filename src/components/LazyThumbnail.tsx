@@ -12,7 +12,7 @@ export const LazyThumbnail: React.FC<LazyThumbnailProps> = ({
   base64Src,
   alt,
   className = '',
-  size = 80,
+  size = 96,
 }) => {
   const [isVisible, setIsVisible] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);

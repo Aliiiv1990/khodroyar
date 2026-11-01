@@ -192,6 +192,20 @@ export const HeaderAndTabs: React.FC<HeaderAndTabsProps> = ({
           </span>
         </button>
       </div>
+
+      {/* Instant Total Breakdown Indicator */}
+      {(saleCount > 0 || buyCount > 0) && (
+        <div className="flex items-center justify-between px-2 pt-0.5 text-[11px] text-slate-500 font-medium">
+          <span>
+            مجموع دیتابیس فعال: <strong className="text-slate-900 font-black">{toPersianDigits(saleCount + buyCount)}</strong> آگهی
+          </span>
+          <div className="flex items-center gap-1.5 text-[10px] bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200">
+            <span className="text-blue-700 font-black">{toPersianDigits(saleCount)} فروش</span>
+            <span className="text-slate-400">•</span>
+            <span className="text-emerald-700 font-black">{toPersianDigits(buyCount)} خرید</span>
+          </div>
+        </div>
+      )}
     </header>
   );
 };

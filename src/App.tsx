@@ -30,7 +30,7 @@ import {
   addListingToCloud,
   fetchAdminDatasetFromCloud,
 } from './utils/cloudSync';
-import { fetchListingsFromLiara, addListingToLiara } from './utils/liaraApi';
+import { fetchListingsFromLiara, addListingToLiara, fetchSyncMetaFromLiara } from './utils/liaraApi';
 
 const DEFAULT_FILTERS: FilterOptions = {
   type: 'sale',
@@ -168,6 +168,7 @@ export default function App() {
   // 3. Polls Liara Server every 25 seconds so all open screens stay continuously synchronized.
   useEffect(() => {
     let isMounted = true;
+    let lastSeenServerTimestamp = '';
 
     // Step 1: Render local cache immediately
     if (!isStorageExplicitlyCleared()) {
@@ -210,28 +211,147 @@ export default function App() {
       }
     });
 
-    // Step 3: Gentle background polling every 25 seconds so other phones update automatically
-    const pollInterval = setInterval(() => {
-      if (!isMounted) return;
-      fetchListingsFromLiara(6000)
-        .then((serverCars) => {
-          if (serverCars && serverCars.length > 0 && isMounted) {
-            setListings((current) => {
-              // Update if count or latest item changed
-              if (current.length !== serverCars.length || current[0]?.id !== serverCars[0]?.id) {
-                saveListingsToIndexedDB(serverCars);
-                return serverCars;
-              }
-              return current;
-            });
+    // Step 3: Real-time Live Synchronization across Mobile & Laptop (SSE)
+    let eventSource: EventSource | null = null;
+    try {
+      eventSource = new EventSource('/api/live-sync');
+      eventSource.onmessage = (event) => {
+        if (!isMounted) return;
+        try {
+          const data = JSON.parse(event.data);
+          if (data && data.lastUpdated) {
+            lastSeenServerTimestamp = data.lastUpdated;
           }
-        })
-        .catch(() => {});
-    }, 25000);
+          if (data && Array.isArray(data.hiddenBatches)) {
+            const serverHidden = new Set<string>(data.hiddenBatches);
+            setHiddenBatches(serverHidden);
+            localStorage.setItem('car_hidden_batches', JSON.stringify(data.hiddenBatches));
+            window.dispatchEvent(new CustomEvent('car_batches_updated', { detail: data }));
+          }
+
+          // If a new bulk sync, clear, batch delete or ad addition occurred from another device
+          if (
+            data &&
+            (data.type === 'bulk_sync' ||
+              data.type === 'clear' ||
+              data.type === 'batch_deleted' ||
+              data.type === 'listing_added')
+          ) {
+            safeFetchServerData();
+          }
+        } catch {
+          // ignore keep-alive or non-json messages
+        }
+      };
+    } catch (e) {
+      console.warn('SSE not supported or failed to connect:', e);
+    }
+
+    // Mutex flag to prevent simultaneous race conditions when writing to IndexedDB
+    let isFetchingServer = false;
+
+    const safeFetchServerData = async () => {
+      if (isFetchingServer || !isMounted) return;
+      if (typeof window !== 'undefined' && (window as any).__isSyncingToLiara) return;
+      isFetchingServer = true;
+      try {
+        const cars = await fetchListingsFromLiara(8000);
+        if (cars && isMounted) {
+          const { prunedListings } = pruneOldListings(cars);
+          setListings(prunedListings);
+          await saveListingsToIndexedDB(prunedListings);
+        }
+      } catch (err) {
+        console.warn('Could not sync with Liara server:', err);
+      } finally {
+        isFetchingServer = false;
+      }
+    };
+
+    // Lightweight metadata checker (~50 bytes)
+    const checkSyncMeta = async () => {
+      if (!isMounted) return;
+      if (typeof window !== 'undefined' && (window as any).__isSyncingToLiara) return;
+
+      try {
+        const meta = await fetchSyncMetaFromLiara();
+        if (!meta || !isMounted) return;
+
+        // Check if batch visibility changed on another phone or laptop
+        if (Array.isArray(meta.hiddenBatches)) {
+          setHiddenBatches((curr) => {
+            const incomingArr = meta.hiddenBatches.slice().sort();
+            const currArr = Array.from(curr).sort();
+            if (JSON.stringify(incomingArr) !== JSON.stringify(currArr)) {
+              localStorage.setItem('car_hidden_batches', JSON.stringify(meta.hiddenBatches));
+              window.dispatchEvent(new CustomEvent('car_batches_updated', { detail: meta }));
+              return new Set(meta.hiddenBatches);
+            }
+            return curr;
+          });
+        }
+
+        // Check if database updated (e.g. ad added or bulk sync on another device)
+        if (meta.lastUpdated && meta.lastUpdated !== lastSeenServerTimestamp) {
+          lastSeenServerTimestamp = meta.lastUpdated;
+          await safeFetchServerData();
+        }
+      } catch {
+        // quiet network failure
+      }
+    };
+
+    // Step 4: Ultra-lightweight fallback polling to /api/sync-meta (~50 bytes)
+    // Runs every 3.5s when active tab, and slows down when tab is hidden to save battery
+    let pollInterval: NodeJS.Timeout | null = null;
+    const startPolling = (ms: number) => {
+      if (pollInterval) clearInterval(pollInterval);
+      pollInterval = setInterval(() => {
+        checkSyncMeta();
+      }, ms);
+    };
+
+    startPolling(3500);
+
+    // Visibility-Aware Background Sync:
+    // When returning to tab or unlocking mobile phone, immediately refresh data in 1ms!
+    const handleVisibilityChange = () => {
+      if (typeof document === 'undefined') return;
+      if (document.visibilityState === 'visible') {
+        checkSyncMeta();
+        startPolling(3500);
+      } else {
+        // Reduce polling frequency in background to save battery and memory
+        startPolling(30000);
+      }
+    };
+
+    // Online Event: when internet connection reconnects, immediately check server
+    const handleOnline = () => {
+      checkSyncMeta();
+    };
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', handleOnline);
+    }
 
     return () => {
       isMounted = false;
-      clearInterval(pollInterval);
+      if (eventSource) {
+        eventSource.close();
+      }
+      if (pollInterval) {
+        clearInterval(pollInterval);
+      }
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', handleOnline);
+      }
     };
   }, []);
 
@@ -239,22 +359,30 @@ export default function App() {
   const handleAddNewListing = useCallback((newListing: CarListing) => {
     setStorageExplicitlyCleared(false);
 
+    const taggedListing: CarListing = {
+      ...newListing,
+      importBatchName: newListing.importBatchName || 'ثبت‌های دستی همکاران و مدیر',
+      importDate: newListing.importDate || new Date().toLocaleDateString('fa-IR'),
+    };
+
     // 1. Optimistic local update
     setListings((prev) => {
-      const updated = [newListing, ...prev.filter((item) => item.id !== newListing.id)];
+      const updated = [taggedListing, ...prev.filter((item) => item.id !== taggedListing.id)];
       saveListingsToIndexedDB(updated);
       return updated;
     });
 
     // 2. Push to Liara Server & Database (if running on Liara)
-    addListingToLiara(newListing).catch((err) => {
+    addListingToLiara(taggedListing).catch((err) => {
       console.warn('Could not sync new ad to Liara server:', err);
     });
 
-    // 3. Push to Firestore so all users across devices receive it
-    addListingToCloud(newListing).catch((err) => {
-      console.warn('Could not sync new ad to cloud:', err);
-    });
+    // 3. Push to Firestore only if NOT on Liara
+    if (typeof window !== 'undefined' && !window.location.hostname.includes('liara.run') && !window.location.hostname.includes('liara.ir')) {
+      addListingToCloud(newListing).catch((err) => {
+        console.warn('Could not sync new ad to cloud:', err);
+      });
+    }
 
     // Switch active tab to match the new listing type
     setFilters((prev) => ({
@@ -264,22 +392,51 @@ export default function App() {
     }));
   }, []);
 
-  // Compute sale and buy request counts
+  // Hidden batches state
+  const [hiddenBatches, setHiddenBatches] = useState<Set<string>>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem('car_hidden_batches');
+        if (raw) return new Set(JSON.parse(raw));
+      } catch {}
+    }
+    return new Set();
+  });
+
+  // Listen for storage events when DataManagerModal toggles batch visibility
+  useEffect(() => {
+    const handleStorageChange = () => {
+      try {
+        const raw = localStorage.getItem('car_hidden_batches');
+        setHiddenBatches(raw ? new Set(JSON.parse(raw)) : new Set());
+      } catch {}
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
+
+  // Active listings that are not hidden by the admin
+  const visibleListings = useMemo(() => {
+    if (hiddenBatches.size === 0) return listings;
+    return listings.filter((l) => !hiddenBatches.has(l.importBatchName || 'ثبت‌های دستی همکاران و مدیر'));
+  }, [listings, hiddenBatches]);
+
+  // Compute sale and buy request counts from visible listings
   const { saleCount, buyCount } = useMemo(() => {
     let sales = 0;
     let buys = 0;
-    const len = listings.length;
+    const len = visibleListings.length;
     for (let i = 0; i < len; i++) {
-      if (listings[i].type === 'sale') sales++;
+      if (visibleListings[i].type === 'sale') sales++;
       else buys++;
     }
     return { saleCount: sales, buyCount: buys };
-  }, [listings]);
+  }, [visibleListings]);
 
   // Fast filtered listings (< 5ms benchmark for 5,000 items)
   const filteredListings = useMemo(() => {
-    return filterCarListings(listings, filters);
-  }, [listings, filters]);
+    return filterCarListings(visibleListings, filters);
+  }, [visibleListings, filters]);
 
   const handleTypeChange = useCallback((type: CarListingType) => {
     setFilters((prev) => ({ ...prev, type }));
@@ -310,6 +467,19 @@ export default function App() {
       setStorageExplicitlyCleared(false);
       saveListingsToIndexedDB(newListings);
     }
+  }, []);
+
+  // Incremental append: adds new files/batches without rewriting or wiping existing listings
+  const handleAppendListings = useCallback((incomingListings: CarListing[]) => {
+    if (!incomingListings || incomingListings.length === 0) return;
+    setStorageExplicitlyCleared(false);
+    setListings((prev) => {
+      const incomingIds = new Set(incomingListings.map((l) => l.id));
+      const preserved = prev.filter((p) => !incomingIds.has(p.id));
+      const merged = [...incomingListings, ...preserved];
+      saveListingsToIndexedDB(merged);
+      return merged;
+    });
   }, []);
 
   const handleRegenerateDemo = useCallback(async () => {
@@ -398,6 +568,7 @@ export default function App() {
         onClose={() => setIsDataManagerOpen(false)}
         listings={listings}
         onUpdateListings={handleUpdateListings}
+        onAppendListings={handleAppendListings}
       />
 
       {/* App Font Size & Settings Modal */}

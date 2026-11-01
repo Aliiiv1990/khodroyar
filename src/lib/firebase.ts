@@ -63,6 +63,13 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 
 // Test cloud connection explicitly with timeout
 export async function checkCloudConnection(timeoutMs = 8000): Promise<{ ok: boolean; message: string }> {
+  if (typeof window !== 'undefined' && (window.location.hostname.includes('liara.run') || window.location.hostname.includes('liara.ir'))) {
+    return {
+      ok: false,
+      message: 'برنامه در بستر سرور مستقل لیارا (بدون فیلتر) مستقر است و به فایربیس نیازی ندارد.',
+    };
+  }
+
   try {
     const timeoutPromise = new Promise<{ ok: boolean; message: string }>((_, reject) =>
       setTimeout(() => reject(new Error('مهلت زمانی اتصال پایان یافت (احتمال اختلال اینترنت یا فیلترینگ)')), timeoutMs)
@@ -79,22 +86,9 @@ export async function checkCloudConnection(timeoutMs = 8000): Promise<{ ok: bool
     if (rawMsg.includes('offline') || rawMsg.includes('مهلت زمانی') || rawMsg.includes('unavailable')) {
       return {
         ok: false,
-        message: 'عدم دسترسی به سرور فایربیس (سرورهای گوگل). لطفاً اتصال اینترنت یا فعال بودن فیلترشکن را بررسی کنید.',
+        message: 'عدم دسترسی به سرور فایربیس (سرورهای گوگل). برنامه از سرور و دیتابیس لیارا استفاده می‌کند.',
       };
     }
     return { ok: false, message: `خطا در ارتباط: ${rawMsg}` };
   }
 }
-
-// Connection test at boot
-async function testConnection() {
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.warn('Firebase connection: client appears offline.');
-    }
-  }
-}
-
-testConnection();

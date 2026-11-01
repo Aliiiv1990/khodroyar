@@ -180,23 +180,29 @@ export const CarDetailModal: React.FC<CarDetailModalProps> = ({
 
               {/* Call Action */}
               {isUnlockedColleague ? (
-                <div className="flex items-center gap-2">
-                  <a
-                    href={`tel:${listing.phoneNumber}`}
-                    className="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl font-black text-sm sm:text-base flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-95 cursor-pointer"
-                  >
-                    <Phone className="w-4 h-4" />
-                    <span>تماس مستقیم ({listing.phoneNumber})</span>
-                  </a>
-                  <button
-                    type="button"
-                    onClick={handleCopyPhone}
-                    className="p-3 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl border border-white/20 transition-colors cursor-pointer"
-                    title="کپی شماره تماس"
-                  >
-                    {copiedPhone ? <Check className="w-5 h-5 text-emerald-400" /> : <Copy className="w-5 h-5" />}
-                  </button>
-                </div>
+                listing.phoneNumber && listing.phoneNumber !== 'ثبت نشده' && !listing.phoneNumber.includes('0000000') ? (
+                  <div className="flex items-center gap-2">
+                    <a
+                      href={`tel:${listing.phoneNumber}`}
+                      className="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl font-black text-sm sm:text-base flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-95 cursor-pointer"
+                    >
+                      <Phone className="w-4 h-4" />
+                      <span>تماس مستقیم ({listing.phoneNumber})</span>
+                    </a>
+                    <button
+                      type="button"
+                      onClick={handleCopyPhone}
+                      className="p-3 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl border border-white/20 transition-colors cursor-pointer"
+                      title="کپی شماره تماس"
+                    >
+                      {copiedPhone ? <Check className="w-5 h-5 text-emerald-400" /> : <Copy className="w-5 h-5" />}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-neutral-800/80 rounded-xl border border-white/10 text-center text-xs text-slate-300 font-bold">
+                    <span>شماره تماس مستقیمی در فایل برای این آگهی ثبت نشده است.</span>
+                  </div>
+                )
               ) : (
                 <button
                   type="button"
@@ -218,13 +224,11 @@ export const CarDetailModal: React.FC<CarDetailModalProps> = ({
             onClick={() => setShowOverlay(!showOverlay)}
             title="برای دیدن عکس کامل بدون نوشته، روی عکس بزنید"
           >
-            {/* The Crisp Car Photo - Unblurred, fills background so it is clearly visible through the glass */}
+            {/* The Crisp Car Photo - Never zoomed or cropped, always authentic aspect ratio */}
             <img
               src={getListingImage(listing, true)}
               alt={listing.title}
-              className={`w-full h-full transition-all duration-200 select-none ${
-                showOverlay ? 'object-cover' : 'object-contain'
-              }`}
+              className="w-full h-full object-contain select-none transition-all duration-200"
               loading="eager"
             />
 
@@ -294,24 +298,30 @@ export const CarDetailModal: React.FC<CarDetailModalProps> = ({
                 {/* Row 4: Call Action or Colleague Unlock */}
                 <div className="pt-0.5">
                   {isUnlockedColleague ? (
-                    <div className="flex items-center gap-2">
-                      <a
-                        href={`tel:${listing.phoneNumber}`}
-                        className="flex-1 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-95 cursor-pointer"
-                      >
-                        <Phone className="w-4 h-4" />
-                        <span>تماس مستقیم ({listing.phoneNumber})</span>
-                      </a>
+                    listing.phoneNumber && listing.phoneNumber !== 'ثبت نشده' && !listing.phoneNumber.includes('0000000') ? (
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={`tel:${listing.phoneNumber}`}
+                          className="flex-1 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-95 cursor-pointer"
+                        >
+                          <Phone className="w-4 h-4" />
+                          <span>تماس مستقیم ({listing.phoneNumber})</span>
+                        </a>
 
-                      <button
-                        type="button"
-                        onClick={handleCopyPhone}
-                        className="p-2.5 bg-black/50 hover:bg-black/70 text-white rounded-xl border border-white/20 transition-colors cursor-pointer"
-                        title="کپی شماره"
-                      >
-                        {copiedPhone ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                      </button>
-                    </div>
+                        <button
+                          type="button"
+                          onClick={handleCopyPhone}
+                          className="p-2.5 bg-black/50 hover:bg-black/70 text-white rounded-xl border border-white/20 transition-colors cursor-pointer"
+                          title="کپی شماره"
+                        >
+                          {copiedPhone ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="py-2 px-3 bg-black/50 rounded-xl border border-white/15 text-center text-xs text-slate-200 font-bold">
+                        <span>شماره تماس مستقیمی در فایل ثبت نشده است.</span>
+                      </div>
+                    )
                   ) : (
                     <button
                       type="button"

@@ -15,7 +15,12 @@ import {
   publishListingsToLiara,
   clearLiaraDatabase,
   downloadLiaraDeploymentZip,
+  fetchLiaraBatches,
+  deleteLiaraBatches,
+  LiaraBatchInfo,
   LiaraHealthResponse,
+  setLiaraBatchVisibility,
+  setMultipleLiaraBatchesVisibility,
 } from '../utils/liaraApi';
 import {
   X,
@@ -47,6 +52,8 @@ import {
   Zap,
   FolderArchive,
   Box,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 interface DataManagerModalProps {
@@ -54,6 +61,7 @@ interface DataManagerModalProps {
   onClose: () => void;
   listings: CarListing[];
   onUpdateListings: (newListings: CarListing[]) => void;
+  onAppendListings?: (incomingListings: CarListing[]) => void;
 }
 
 // Complete mock session adhering to the Car Exhibition Dataset Specification
@@ -155,6 +163,7 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
   onClose,
   listings,
   onUpdateListings,
+  onAppendListings,
 }) => {
   const [inputText, setInputText] = useState('');
   const [importStatus, setImportStatus] = useState<string | null>(null);
@@ -177,12 +186,66 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
   const [isFetchingLiara, setIsFetchingLiara] = useState(false);
   const [isDownloadingLiaraZip, setIsDownloadingLiaraZip] = useState(false);
   const [liaraZipProgress, setLiaraZipProgress] = useState(0);
+  const [batches, setBatches] = useState<LiaraBatchInfo[]>([]);
+  const [hiddenBatches, setHiddenBatches] = useState<Set<string>>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem('car_hidden_batches');
+        if (raw) return new Set(JSON.parse(raw));
+      } catch {}
+    }
+    return new Set();
+  });
+  const [isLoadingBatches, setIsLoadingBatches] = useState(false);
+  const [isDeletingBatch, setIsDeletingBatch] = useState(false);
+  const [newlyImportedBatch, setNewlyImportedBatch] = useState<{
+    batchName: string;
+    listings: CarListing[];
+    count: number;
+    sellersCount: number;
+    buyersCount: number;
+  } | null>(null);
+  const [publishingBatchName, setPublishingBatchName] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Check Liara health on modal open
+  // Load server batches and their visibility status
+  const loadBatches = async () => {
+    setIsLoadingBatches(true);
+    try {
+      const serverBatches = await fetchLiaraBatches();
+      setBatches(serverBatches);
+      const serverHidden = new Set<string>();
+      for (const b of serverBatches) {
+        if (b.isVisible === false) {
+          serverHidden.add(b.batchName);
+        }
+      }
+      setHiddenBatches(serverHidden);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('car_hidden_batches', JSON.stringify(Array.from(serverHidden)));
+      }
+    } catch {
+      // ignore
+    } finally {
+      setIsLoadingBatches(false);
+    }
+  };
+
+  // Check Liara health and load batches on modal open, and listen to real-time sync events from other devices
   React.useEffect(() => {
     if (isOpen) {
       handleCheckLiara();
+      loadBatches();
+
+      const handleLiveSync = () => {
+        loadBatches();
+      };
+      window.addEventListener('car_batches_updated', handleLiveSync);
+      window.addEventListener('storage', handleLiveSync);
+      return () => {
+        window.removeEventListener('car_batches_updated', handleLiveSync);
+        window.removeEventListener('storage', handleLiveSync);
+      };
     }
   }, [isOpen]);
 
@@ -203,34 +266,185 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
     }
   };
 
-  // Publish all current listings to Liara centralized database on disk
-  const handlePublishToLiara = async () => {
-    if (listings.length === 0) {
+  // Combine server batches with local listings for guaranteed visibility
+  const displayBatches = React.useMemo(() => {
+    const map = new Map<string, LiaraBatchInfo>();
+
+    // 1. First add server batches
+    for (const b of batches) {
+      map.set(b.batchName, {
+        ...b,
+        isVisible: !hiddenBatches.has(b.batchName),
+      });
+    }
+
+    // 2. Also ensure any local batches (including manual entries) are represented
+    for (const item of listings) {
+      const bName = item.importBatchName || 'ثبت‌های دستی همکاران و مدیر';
+      const bDate = item.importDate || (item.createdAt ? new Date(item.createdAt).toLocaleDateString('fa-IR') : 'امروز');
+      const existing = map.get(bName);
+      if (!existing) {
+        map.set(bName, {
+          id: bName,
+          batchName: bName,
+          date: bDate,
+          count: 1,
+          saleCount: item.type === 'buy_request' ? 0 : 1,
+          buyCount: item.type === 'buy_request' ? 1 : 0,
+          isVisible: !hiddenBatches.has(bName),
+        });
+      }
+    }
+
+    return Array.from(map.values());
+  }, [batches, listings, hiddenBatches]);
+
+  // Toggle visibility of a specific batch/file
+  const handleToggleBatchVisibility = async (batchName: string) => {
+    const isCurrentlyHidden = hiddenBatches.has(batchName);
+    const newIsVisible = isCurrentlyHidden; // If hidden, make visible; if visible, hide!
+
+    const nextHidden = new Set(hiddenBatches);
+    if (newIsVisible) {
+      nextHidden.delete(batchName);
+    } else {
+      nextHidden.add(batchName);
+    }
+    setHiddenBatches(nextHidden);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('car_hidden_batches', JSON.stringify(Array.from(nextHidden)));
+      // Dispatch storage event so App.tsx can re-render immediately
+      window.dispatchEvent(new Event('storage'));
+    }
+
+    try {
+      const res = await setLiaraBatchVisibility(batchName, newIsVisible);
+      setImportStatus(
+        newIsVisible
+          ? `فایل/بسته «${batchName}» فعال شد و محتوای آن در لیست به همه نمایش داده می‌شود.`
+          : `فایل/بسته «${batchName}» موقتاً مخفی شد (داده‌ها در سرور محفوظ است ولی در لیست به کاربران نمایش داده نمی‌شود).`
+      );
+      setIsSuccess(true);
+      loadBatches();
+    } catch (err: any) {
+      setImportStatus(`خطا در تغییر وضعیت نمایش: ${err.message || 'مشکل ارتباط با سرور'}`);
+      setIsSuccess(false);
+    }
+  };
+
+  // Show all batches
+  const handleShowAllBatches = async () => {
+    const allBatchNames = displayBatches.map((b) => b.batchName);
+    setHiddenBatches(new Set());
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('car_hidden_batches', JSON.stringify([]));
+      window.dispatchEvent(new Event('storage'));
+    }
+    try {
+      await setMultipleLiaraBatchesVisibility(allBatchNames, true);
+      setImportStatus('تمامی فایل‌ها و بسته‌ها فعال شدند و در برنامه نمایش داده می‌شوند.');
+      setIsSuccess(true);
+      loadBatches();
+    } catch (err: any) {
+      setImportStatus(`خطا در فعال‌سازی: ${err.message}`);
+      setIsSuccess(false);
+    }
+  };
+
+  // Hide all batches
+  const handleHideAllBatches = async () => {
+    const allBatchNames = displayBatches.map((b) => b.batchName);
+    setHiddenBatches(new Set(allBatchNames));
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('car_hidden_batches', JSON.stringify(allBatchNames));
+      window.dispatchEvent(new Event('storage'));
+    }
+    try {
+      await setMultipleLiaraBatchesVisibility(allBatchNames, false);
+      setImportStatus('تمامی فایل‌ها موقتاً مخفی شدند (داده‌ها در سرور محفوظ است).');
+      setIsSuccess(true);
+      loadBatches();
+    } catch (err: any) {
+      setImportStatus(`خطا در مخفی‌سازی: ${err.message}`);
+      setIsSuccess(false);
+    }
+  };
+
+  // Delete a specific batch from server and local state
+  const handleDeleteSingleBatch = async (batchName: string) => {
+    setIsDeletingBatch(true);
+    setImportStatus(`در حال حذف دائم بسته «${batchName}» از سرور لیارا و این دستگاه...`);
+
+    try {
+      const res = await deleteLiaraBatches({ batchName });
+
+      const remainingListings = listings.filter((l) => (l.importBatchName || 'ثبت‌های دستی همکاران و مدیر') !== batchName);
+      await saveListingsToIndexedDB(remainingListings);
+      onUpdateListings(remainingListings);
+
+      setHiddenBatches((prev) => {
+        const next = new Set(prev);
+        next.delete(batchName);
+        return next;
+      });
+
+      setImportStatus(res.message || `بسته «${batchName}» با موفقیت به طور دائم حذف شد.`);
+      setIsSuccess(true);
+      handleCheckLiara();
+      loadBatches();
+    } catch (err: any) {
+      setImportStatus(`خطا در حذف بسته: ${err.message || 'مشکل ارتباط با سرور'}`);
+      setIsSuccess(false);
+    } finally {
+      setIsDeletingBatch(false);
+    }
+  };
+
+  // Publish listings to Liara centralized database on disk (Safe Merge)
+  // Supports publishing only the newly imported batch, a specific file, or all listings
+  const handlePublishToLiara = async (customListings?: CarListing[], customTitle?: string) => {
+    const targetListings = customListings || (newlyImportedBatch ? newlyImportedBatch.listings : listings);
+    const targetTitle = customTitle || (newlyImportedBatch ? newlyImportedBatch.batchName : 'تمامی آگهی‌ها');
+
+    if (targetListings.length === 0) {
       setImportStatus('ابتدا باید دیتایی وارد سامانه شده باشد تا روی سرور لیارا ذخیره گردد.');
       setIsSuccess(false);
       return;
     }
     setIsPublishingLiara(true);
+    setPublishingBatchName(targetTitle);
     setPublishProgress(0);
-    setImportStatus('در حال ارسال بسته اطلاعاتی به سرور لیارا و ذخیره‌سازی در دیسک دائمی...');
+    setImportStatus(`در حال ارسال «${targetTitle}» (${toPersianDigits(targetListings.length)} خودرو) به سرور لیارا (بدون حذف فایل‌های قبلی)...`);
+    if (typeof window !== 'undefined') {
+      (window as any).__isSyncingToLiara = true;
+    }
     try {
       const res = await publishListingsToLiara(
-        listings,
-        false,
+        targetListings,
+        true, // Safe append/merge mode! Never wipe previous batches
         'مدیر نمایشگاه',
         (percent, curBatch, totalBatches) => {
           setPublishProgress(percent);
-          setImportStatus(
-            `در حال ارسال بسته اطلاعاتی ${toPersianDigits(curBatch)} از ${toPersianDigits(totalBatches)} به سرور لیارا (${toPersianDigits(percent)}٪)...`
-          );
+          if (curBatch === 0) {
+            setImportStatus(`در حال بهینه‌سازی و فشرده‌سازی تصاویر برای ارسال سریع (${toPersianDigits(percent)}٪)...`);
+          } else {
+            setImportStatus(
+              `در حال ارسال بسته اطلاعاتی ${toPersianDigits(curBatch)} از ${toPersianDigits(totalBatches)} به سرور لیارا (${toPersianDigits(percent)}٪)...`
+            );
+          }
         }
       );
       if (res.success) {
         setImportStatus(
-          res.message || `اطلاعات روزانه (${toPersianDigits(listings.length)} خودرو همراه با تصاویر) با موفقیت در دیتابیس پایدار لیارا ذخیره شد!`
+          res.message || `بسته «${targetTitle}» (${toPersianDigits(targetListings.length)} خودرو) با موفقیت در دیتابیس لیارا ثبت شد و فایل‌های قبلی کاملاً حفظ شدند.`
         );
         setIsSuccess(true);
+        // Clear newly imported batch if it was just successfully published
+        if (newlyImportedBatch && (customListings === newlyImportedBatch.listings || !customListings)) {
+          setNewlyImportedBatch(null);
+        }
         handleCheckLiara();
+        loadBatches();
       } else {
         setImportStatus(res.message);
         setIsSuccess(false);
@@ -239,7 +453,11 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
       setImportStatus(`خطا در ارتباط با سرور لیارا: ${err.message || 'خطای شبکه'}`);
       setIsSuccess(false);
     } finally {
+      if (typeof window !== 'undefined') {
+        (window as any).__isSyncingToLiara = false;
+      }
       setIsPublishingLiara(false);
+      setPublishingBatchName(null);
     }
   };
 
@@ -433,14 +651,22 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
     }
   };
 
-  // Clear all listings
+  // Clear all listings (both locally and on Liara server)
   const handleConfirmClearAll = async () => {
     await clearIndexedDBListings();
     setStorageExplicitlyCleared(true);
     onUpdateListings([]);
     setShowClearConfirm(false);
-    setImportStatus('تمامی آگهی‌ها با موفقیت پاک شدند (دیتابیس کاملاً خالی شد و در حافظه ماندگار ثبت گردید).');
+
+    try {
+      await clearLiaraDatabase();
+      setImportStatus('تمامی آگهی‌ها هم از روی این دستگاه و هم از روی سرور لیارا به طور کامل پاکسازی شدند (دیتابیس کاملاً خالی شد).');
+    } catch {
+      setImportStatus('تمامی آگهی‌های این دستگاه پاک شدند.');
+    }
     setIsSuccess(true);
+    handleCheckLiara();
+    loadBatches();
   };
 
   const handlePruneNow = async () => {
@@ -483,43 +709,74 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
 
       // Case A: ZIP archive (car_session_*.zip)
       if (fileNameLower.endsWith('.zip')) {
-        const result = await parseZipArchive(file);
-        const { prunedListings, removedCount } = pruneOldListings(result.listings);
-        setStorageExplicitlyCleared(false);
-        await saveListingsToIndexedDB(prunedListings);
-        onUpdateListings(prunedListings);
+        const result = await parseZipArchive(file, file.name);
+
+        if (onAppendListings) {
+          onAppendListings(result.listings);
+        } else {
+          const existingOtherListings = listings.filter((l) => (l.importBatchName || '') !== file.name);
+          const mergedListings = [...result.listings, ...existingOtherListings];
+          setStorageExplicitlyCleared(false);
+          await saveListingsToIndexedDB(mergedListings);
+          onUpdateListings(mergedListings);
+        }
+
+        setNewlyImportedBatch({
+          batchName: file.name,
+          listings: result.listings,
+          count: result.listings.length,
+          sellersCount: result.sellersCount,
+          buyersCount: result.buyersCount,
+        });
 
         setImportStatus(
-          `آرشیو زیپ با موفقیت باز شد: ${toPersianDigits(result.sellersCount)} خودرو فروشی، ${toPersianDigits(
+          `آرشیو زیپ (${file.name}) اضافه شد: ${toPersianDigits(result.sellersCount)} خودرو فروشی، ${toPersianDigits(
             result.buyersCount
-          )} سفارش خرید، و ${toPersianDigits(result.extractedImagesCount)} تصویر از پوشه data/ استخراج شد. (${toPersianDigits(
-            removedCount
-          )} مورد قدیمی منقضی شد)`
+          )} سفارش خرید آماده انتشار در لیارا هستند (فایل‌های قبلی حفظ شدند).`
         );
         setIsSuccess(true);
-        setActiveTab('status');
+        setActiveTab('liara');
+        loadBatches();
       }
       // Case B: CSV file
       else if (fileNameLower.endsWith('.csv')) {
         const text = await file.text();
-        const csvListings = parseCarCsv(text);
+        const csvListings = parseCarCsv(text, file.name);
         if (csvListings.length === 0) {
           throw new Error('هیچ رکوردی در فایل CSV یافت نشد.');
         }
-        const { prunedListings } = pruneOldListings(csvListings);
-        setStorageExplicitlyCleared(false);
-        await saveListingsToIndexedDB(prunedListings);
-        onUpdateListings(prunedListings);
 
-        setImportStatus(`فایل CSV با موفقیت پردازش شد: ${toPersianDigits(csvListings.length)} رکورد وارد سامانه شد.`);
+        if (onAppendListings) {
+          onAppendListings(csvListings);
+        } else {
+          const existingOtherListings = listings.filter((l) => (l.importBatchName || '') !== file.name);
+          const mergedListings = [...csvListings, ...existingOtherListings];
+          setStorageExplicitlyCleared(false);
+          await saveListingsToIndexedDB(mergedListings);
+          onUpdateListings(mergedListings);
+        }
+
+        const sales = csvListings.filter((l) => l.type === 'sale').length;
+        const buys = csvListings.filter((l) => l.type === 'buy_request').length;
+
+        setNewlyImportedBatch({
+          batchName: file.name,
+          listings: csvListings,
+          count: csvListings.length,
+          sellersCount: sales,
+          buyersCount: buys,
+        });
+
+        setImportStatus(`فایل CSV (${file.name}) اضافه شد: ${toPersianDigits(csvListings.length)} رکورد آماده انتشار در لیارا هستند.`);
         setIsSuccess(true);
-        setActiveTab('status');
+        setActiveTab('liara');
+        loadBatches();
       }
       // Case C: JSON file (session.json)
       else {
         const text = await file.text();
         setInputText(text);
-        await processJsonText(text, false);
+        await processJsonText(text, false, file.name);
       }
     } catch (err: any) {
       setImportStatus(`خطا در باز کردن فایل: ${err.message || 'فرمت نامعتبر است'}`);
@@ -530,7 +787,7 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
     }
   };
 
-  const processJsonText = async (rawText: string, append = false) => {
+  const processJsonText = async (rawText: string, append = false, sourceBatchName = 'فایل داده') => {
     try {
       if (!rawText.trim()) {
         setImportStatus('لطفاً ابتدا محتوای JSON یا CSV را در کادر زیر وارد کنید.');
@@ -540,15 +797,16 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
 
       // Check if CSV
       if (rawText.includes(',') && (rawText.includes('اسم ماشین') || rawText.includes('اسم مشتری'))) {
-        const csvListings = parseCarCsv(rawText);
-        const merged = append ? [...csvListings, ...listings] : csvListings;
-        const { prunedListings } = pruneOldListings(merged);
+        const csvListings = parseCarCsv(rawText, sourceBatchName);
+        const existingOther = listings.filter((l) => (l.importBatchName || '') !== sourceBatchName);
+        const merged = append ? [...csvListings, ...listings] : [...csvListings, ...existingOther];
         setStorageExplicitlyCleared(false);
-        await saveListingsToIndexedDB(prunedListings);
-        onUpdateListings(prunedListings);
-        setImportStatus(`تعداد ${toPersianDigits(csvListings.length)} رکورد از CSV با موفقیت اضافه شد.`);
+        await saveListingsToIndexedDB(merged);
+        onUpdateListings(merged);
+        setImportStatus(`تعداد ${toPersianDigits(csvListings.length)} رکورد از CSV اضافه گردید.`);
         setIsSuccess(true);
         setInputText('');
+        loadBatches();
         return;
       }
 
@@ -556,33 +814,40 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
 
       let newListings: CarListing[] = [];
       let message = '';
+      const currentDateFa = new Date().toLocaleDateString('fa-IR');
 
       // Case 1: Array of listings (e.g., full backup or API feed)
       if (Array.isArray(parsed)) {
         newListings = parsed.map((item: any) => ({
           ...item,
+          importBatchName: item.importBatchName || sourceBatchName,
+          importDate: item.importDate || currentDateFa,
           imageThumbnailBase64: getListingImage(item, false),
           imageFullBase64: getListingImage(item, true),
           _searchIndex: item._searchIndex || buildSearchIndex(item),
         }));
-        message = `بارگذاری بسته کامل پشتیبان: ${toPersianDigits(newListings.length)} خودرو با تصاویر کامل فعال شد.`;
+        message = `بارگذاری بسته پشتیبان: ${toPersianDigits(newListings.length)} خودرو با تصاویر کامل فعال شد.`;
       }
       // Case 2: Full session.json with sellers / buyers
       else if (parsed && typeof parsed === 'object' && (parsed.sellers || parsed.buyers)) {
-        const sessionResult = parseSessionJson(parsed);
+        const sessionResult = parseSessionJson(parsed, new Map(), new Map(), sourceBatchName);
         newListings = sessionResult.listings.map((item) => ({
           ...item,
+          importBatchName: item.importBatchName || sourceBatchName,
+          importDate: item.importDate || currentDateFa,
           imageThumbnailBase64: getListingImage(item, false),
           imageFullBase64: getListingImage(item, true),
         }));
         message = `تزریق فایل کامل: ${toPersianDigits(sessionResult.sellersCount)} فروشنده و ${toPersianDigits(
           sessionResult.buyersCount
-        )} متقاضی خرید وارد شدند.`;
+        )} متقاضی خرید افزوده شدند.`;
       } else {
         // Case 3: Fallback to sellerDataParser
         const sellerResult = parseSellersJson(parsed);
         newListings = sellerResult.listings.map((item) => ({
           ...item,
+          importBatchName: item.importBatchName || sourceBatchName,
+          importDate: item.importDate || currentDateFa,
           imageThumbnailBase64: getListingImage(item, false),
           imageFullBase64: getListingImage(item, true),
         }));
@@ -593,15 +858,30 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
         throw new Error('هیچ رکورد معتبری در ورودی یافت نشد.');
       }
 
-      const merged = append ? [...newListings, ...listings] : newListings;
-      const { prunedListings, removedCount } = pruneOldListings(merged);
+      if (onAppendListings) {
+        onAppendListings(newListings);
+      } else {
+        const existingOther = listings.filter((l) => (l.importBatchName || '') !== sourceBatchName);
+        const merged = append ? [...newListings, ...listings] : [...newListings, ...existingOther];
+        setStorageExplicitlyCleared(false);
+        await saveListingsToIndexedDB(merged);
+        onUpdateListings(merged);
+      }
 
-      setStorageExplicitlyCleared(false);
-      await saveListingsToIndexedDB(prunedListings);
-      onUpdateListings(prunedListings);
-      setImportStatus(`${message} (${toPersianDigits(removedCount)} مورد منقضی ۴ روز حذف شد)`);
+      const sales = newListings.filter((l) => l.type === 'sale').length;
+      const buys = newListings.filter((l) => l.type === 'buy_request').length;
+      setNewlyImportedBatch({
+        batchName: sourceBatchName,
+        listings: newListings,
+        count: newListings.length,
+        sellersCount: sales,
+        buyersCount: buys,
+      });
+
+      setImportStatus(`${message} (${toPersianDigits(newListings.length)} رکورد جدید - آماده ثبت سریع در لیارا)`);
       setIsSuccess(true);
       setInputText('');
+      setActiveTab('liara');
     } catch (err: any) {
       setImportStatus(`خطا در پردازش ورودی: ${err.message || 'ساختار نامعتبر است'}`);
       setIsSuccess(false);
@@ -839,10 +1119,13 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
                   </div>
 
                   <div className="bg-black/25 p-2.5 rounded-xl border border-white/5">
-                    <span className="text-[10px] text-purple-300 block mb-0.5 font-bold">تعداد خودرو در سرور:</span>
-                    <span className="font-black text-white">
-                      {liaraHealth?.totalListings !== undefined ? `${toPersianDigits(liaraHealth.totalListings)} خودرو` : `${toPersianDigits(listings.length)} آگهی فعلی`}
-                    </span>
+                    <span className="text-[10px] text-purple-300 block mb-0.5 font-bold">تعداد در دیتابیس سرور:</span>
+                    <div className="text-white font-black text-xs">
+                      <span>{toPersianDigits(liaraHealth?.totalListings ?? listings.length)} آگهی</span>
+                      <span className="text-[10px] text-purple-300 block font-normal">
+                        ({toPersianDigits(listings.filter((l) => l.type === 'sale').length)} فروش + {toPersianDigits(listings.filter((l) => l.type === 'buy_request').length)} خرید)
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -920,7 +1203,7 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
                 </div>
 
                 {/* 2. Admin Daily Sync to Liara Server */}
-                <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-2xs space-y-2.5">
+                <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-2xs space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
                       <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
@@ -931,7 +1214,7 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
                           ۲. انتشار روزانه آگهی‌ها در دیتابیس دائمی لیارا
                         </h5>
                         <p className="text-[11px] text-slate-500">
-                          ثبت تمامی {toPersianDigits(listings.length)} آگهی فعلی همراه با تصاویر در سرور تا همه بازدیدکنندگان آن را ببینند
+                          ارسال اطلاعات به سرور لیارا تا همه کاربران در گوشی‌ها و لپ‌تاپ‌های خود آن را مشاهده کنند
                         </p>
                       </div>
                     </div>
@@ -940,38 +1223,285 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
                     </span>
                   </div>
 
-                  <div className="flex flex-wrap gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={handlePublishToLiara}
-                      disabled={isPublishingLiara || isFetchingLiara || listings.length === 0}
-                      className="flex-1 min-w-[200px] flex items-center justify-center gap-2 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 disabled:opacity-50 text-white font-black text-xs rounded-xl cursor-pointer shadow-sm transition-colors"
-                    >
-                      {isPublishingLiara ? (
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <CloudUpload className="w-4 h-4" />
-                      )}
-                      <span>انتشار و ذخیره {toPersianDigits(listings.length)} آگهی در سرور لیارا</span>
-                    </button>
+                  {/* Smart Card: If a new file was just imported */}
+                  {newlyImportedBatch ? (
+                    <div className="bg-emerald-50 border-2 border-emerald-400 p-3.5 rounded-2xl space-y-3 shadow-xs">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                          <div className="w-7 h-7 rounded-lg bg-emerald-600 text-white flex items-center justify-center shrink-0">
+                            <Zap className="w-4 h-4 text-yellow-300" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-[10px] font-black bg-emerald-200 text-emerald-900 px-2 py-0.5 rounded">
+                                فایل جدید وارد شده
+                              </span>
+                              <span className="text-xs font-black text-emerald-950 truncate max-w-[200px] sm:max-w-[300px]">
+                                {newlyImportedBatch.batchName}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-emerald-800 font-medium mt-0.5">
+                              شامل {toPersianDigits(newlyImportedBatch.count)} آگهی ({toPersianDigits(newlyImportedBatch.sellersCount)} فروشنده + {toPersianDigits(newlyImportedBatch.buyersCount)} خریدار)
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setNewlyImportedBatch(null)}
+                          className="text-[11px] text-emerald-700 hover:text-emerald-950 underline cursor-pointer"
+                        >
+                          صرف‌نظر
+                        </button>
+                      </div>
 
-                    <button
-                      type="button"
-                      onClick={handleFetchFromLiara}
-                      disabled={isPublishingLiara || isFetchingLiara}
-                      className="flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-black text-xs rounded-xl cursor-pointer transition-colors"
-                    >
-                      {isFetchingLiara ? (
-                        <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
-                      ) : (
-                        <CloudDownload className="w-4 h-4 text-blue-600" />
-                      )}
-                      <span>دریافت آخرین نسخه از لیارا</span>
-                    </button>
-                  </div>
+                      <div className="bg-white/80 p-2.5 rounded-xl text-xs text-emerald-900 leading-relaxed border border-emerald-200 flex items-start gap-2">
+                        <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                        <span>
+                          <strong>ارسال هوشمند و فوق‌سریع:</strong> نیازی به ارسال مجدد فایل‌های قبلی نیست! تنها همین فایل جدید در چند ثانیه به دیتابیس لیارا متصل می‌شود و داده‌های قبلی کاملاً محفوظ می‌مانند.
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => handlePublishToLiara(newlyImportedBatch.listings, newlyImportedBatch.batchName)}
+                          disabled={isPublishingLiara}
+                          className="flex-1 min-w-[200px] flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-50 text-white font-black text-xs rounded-xl cursor-pointer shadow-md transition-all"
+                        >
+                          {isPublishingLiara && publishingBatchName === newlyImportedBatch.batchName ? (
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <UploadCloud className="w-4 h-4" />
+                          )}
+                          <span>⚡ انتشار فقط همین فایل جدید ({toPersianDigits(newlyImportedBatch.count)} خودرو)</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handlePublishToLiara(listings, 'همه آگهی‌ها')}
+                          disabled={isPublishingLiara}
+                          className="flex items-center justify-center gap-1.5 px-3 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] rounded-xl cursor-pointer transition-colors"
+                          title="ارسال مجدد کلیه آگهی‌های ثبت شده از ابتدا تا کنون"
+                        >
+                          <span>ارسال همه ({toPersianDigits(listings.length)})</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleFetchFromLiara}
+                          disabled={isPublishingLiara || isFetchingLiara}
+                          className="flex items-center justify-center gap-1.5 px-3 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] rounded-xl cursor-pointer transition-colors"
+                        >
+                          {isFetchingLiara ? (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-600" />
+                          ) : (
+                            <CloudDownload className="w-3.5 h-3.5 text-blue-600" />
+                          )}
+                          <span>دریافت از سرور</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Default state: option to publish all or fetch from server */
+                    <div className="space-y-2">
+                      <p className="text-xs text-slate-600 leading-relaxed">
+                        مجموعاً <strong>{toPersianDigits(listings.length)} خودرو</strong> در حافظه این سیستم آماده همگام‌سازی است.
+                      </p>
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => handlePublishToLiara(listings, 'همه آگهی‌ها')}
+                          disabled={isPublishingLiara || isFetchingLiara || listings.length === 0}
+                          className="flex-1 min-w-[200px] flex items-center justify-center gap-2 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 disabled:opacity-50 text-white font-black text-xs rounded-xl cursor-pointer shadow-sm transition-colors"
+                        >
+                          {isPublishingLiara && publishingBatchName === 'همه آگهی‌ها' ? (
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <CloudUpload className="w-4 h-4" />
+                          )}
+                          <span>انتشار و همگام‌سازی تمامی {toPersianDigits(listings.length)} آگهی در سرور لیارا</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleFetchFromLiara}
+                          disabled={isPublishingLiara || isFetchingLiara}
+                          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-black text-xs rounded-xl cursor-pointer transition-colors"
+                        >
+                          {isFetchingLiara ? (
+                            <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
+                          ) : (
+                            <CloudDownload className="w-4 h-4 text-blue-600" />
+                          )}
+                          <span>دریافت آخرین نسخه از لیارا</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                {/* 3. Three-step guide */}
+                {/* 3. Batch Visibility & File Manager (Toggle visibility or delete specific files/dates) */}
+                <div className="bg-white border-2 border-purple-200 p-4 rounded-2xl shadow-2xs space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0">
+                        <Layers className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h5 className="font-black text-slate-800 text-xs sm:text-sm">
+                          مدیریت فایل‌ها، پوشه‌های زیپ و ورودی‌های دستی
+                        </h5>
+                        <p className="text-[11px] text-slate-500">
+                          با گذاشتن یا برداشتن تیک، انتخاب کنید محتوای کدوم فایل‌ها به همه نشان داده شود (بدون پاک شدن اطلاعات)
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={handleShowAllBatches}
+                        className="text-[11px] bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold px-2.5 py-1 rounded-lg border border-emerald-200 cursor-pointer transition-colors"
+                        title="نمایش محتوای تمامی فایل‌ها در برنامه"
+                      >
+                        نمایش همه
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleHideAllBatches}
+                        className="text-[11px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-2.5 py-1 rounded-lg border border-slate-200 cursor-pointer transition-colors"
+                        title="مخفی‌سازی موقت تمامی فایل‌ها"
+                      >
+                        مخفی‌سازی همه
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleCheckLiara();
+                          loadBatches();
+                        }}
+                        disabled={isLoadingBatches}
+                        className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 cursor-pointer transition-colors"
+                        title="بروزرسانی وضعیت فایل‌ها"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${isLoadingBatches ? 'animate-spin text-purple-600' : ''}`} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {displayBatches.length === 0 ? (
+                    <div className="text-center py-5 text-slate-400 text-xs bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                      هنوز فایلی در سرور یا سامانه ثبت نشده است.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="text-[11px] font-bold text-slate-500 px-1 flex items-center justify-between border-b border-slate-100 pb-1.5">
+                        <span>لیست فایل‌های موجود در دیتابیس ({toPersianDigits(displayBatches.length)} فایل):</span>
+                        <span className="text-[10px] text-purple-700 font-medium">
+                          تیک سبز = فعال و نمایان به کاربران | بدون تیک = مخفی در دیتابیس
+                        </span>
+                      </div>
+
+                      {/* Batches List with Visibility Checkbox */}
+                      <div className="space-y-2 max-h-60 overflow-y-auto pr-0.5">
+                        {displayBatches.map((batch) => {
+                          const isVisible = batch.isVisible !== false;
+                          const isManualBatch = batch.batchName.includes('ثبت‌های دستی') || batch.batchName.includes('دستی');
+
+                          return (
+                            <div
+                              key={batch.id}
+                              className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
+                                isVisible
+                                  ? 'border-emerald-300 bg-emerald-50/40 shadow-xs'
+                                  : 'border-slate-200 bg-slate-100/70 opacity-75'
+                              }`}
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                <label
+                                  className="flex items-center gap-2 cursor-pointer select-none"
+                                  title={isVisible ? 'کلیک کنید تا این فایل مخفی شود' : 'کلیک کنید تا این فایل فعال و نمایش داده شود'}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isVisible}
+                                    onChange={() => handleToggleBatchVisibility(batch.batchName)}
+                                    className="w-4 h-4 rounded text-emerald-600 border-slate-300 focus:ring-emerald-500 cursor-pointer shrink-0"
+                                  />
+                                  <span
+                                    className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                                      isVisible
+                                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                        : 'bg-slate-200 text-slate-600 border border-slate-300'
+                                    }`}
+                                  >
+                                    {isVisible ? 'نمایش به همه' : 'مخفی'}
+                                  </span>
+                                </label>
+
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-black text-slate-900 text-xs truncate">
+                                      {isManualBatch ? '✍️ ' : '📁 '}
+                                      {batch.batchName}
+                                    </span>
+                                    <span className="text-[10px] font-bold bg-slate-200/80 text-slate-700 px-1.5 py-0.5 rounded">
+                                      📅 {batch.date}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-1">
+                                    <span className="font-bold text-slate-700">
+                                      مجموع {toPersianDigits(batch.count)} آگهی:
+                                    </span>
+                                    <span className="text-blue-700 font-semibold">
+                                      {toPersianDigits(batch.saleCount)} فروشنده
+                                    </span>
+                                    <span>•</span>
+                                    <span className="text-emerald-700 font-semibold">
+                                      {toPersianDigits(batch.buyCount)} خریدار
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const bItems = listings.filter(
+                                      (l) => (l.importBatchName || 'ثبت‌های دستی همکاران و مدیر') === batch.batchName
+                                    );
+                                    if (bItems.length > 0) {
+                                      handlePublishToLiara(bItems, batch.batchName);
+                                    } else {
+                                      setImportStatus(`آگهی‌های این فایل برای ارسال مجدد در حافظه این دستگاه یافت نشد.`);
+                                    }
+                                  }}
+                                  disabled={isPublishingLiara}
+                                  className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg cursor-pointer transition-colors"
+                                  title={`ارسال یا به‌روزرسانی اختصاصی فقط این بسته (${batch.batchName}) به سرور لیارا`}
+                                >
+                                  <UploadCloud className="w-4 h-4" />
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteSingleBatch(batch.batchName)}
+                                  disabled={isDeletingBatch}
+                                  className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg cursor-pointer transition-colors"
+                                  title={`حذف دائم این فایل از سرور و برنامه`}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 4. Three-step guide */}
                 <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl space-y-2">
                   <h6 className="font-black text-xs text-slate-800 flex items-center gap-1.5">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600" />

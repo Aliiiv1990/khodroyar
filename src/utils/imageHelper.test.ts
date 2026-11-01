@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getListingImage, getColorHex, generateCarSvg } from './imageHelper';
+import { getListingImage, getColorHex, generateCarSvg, optimizeImageForUpload } from './imageHelper';
 import { CarListing } from '../types/car';
 
 test('imageHelper generates fallback vehicle SVG when no images exist', () => {
@@ -34,4 +34,17 @@ test('getColorHex returns authentic Iranian vehicle hex colors', () => {
   assert.equal(getColorHex('مشکی آبنوس متالیک'), '#1e293b');
   assert.equal(getColorHex('نقره‌ای متالیک'), '#94a3b8');
   assert.equal(getColorHex('قرمز رژ'), '#dc2626');
+});
+
+test('optimizeImageForUpload preserves short strings and SVG without errors', async () => {
+  const svg = 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=';
+  const resSvg = await optimizeImageForUpload(svg);
+  assert.equal(resSvg, svg);
+
+  const empty = await optimizeImageForUpload('');
+  assert.equal(empty, '');
+
+  const short = 'data:image/jpeg;base64,tiny';
+  const resShort = await optimizeImageForUpload(short);
+  assert.equal(resShort, short);
 });

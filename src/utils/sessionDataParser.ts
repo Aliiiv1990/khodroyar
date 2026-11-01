@@ -2,7 +2,7 @@ import JSZip from 'jszip';
 import { CarListing, CarListingType } from '../types/car';
 import { normalizePersianText, buildSearchIndex } from './persianSearch';
 import { toPersianDigits, formatTomanPrice } from './dataPruner';
-import { formatIranianPhone, parseCarYear, extractCarAttributes, detectBrand } from './sellerDataParser';
+import { formatIranianPhone, extractIranianPhone, parseCarYear, extractCarAttributes, detectBrand } from './sellerDataParser';
 
 export interface RawSellerRecord {
   id: string;
@@ -174,7 +174,8 @@ function createCarPlaceholder(colorHex: string, modelName: string, isFull: boole
 export function parseSessionJson(
   sessionData: SessionJsonRoot,
   imageMap: Map<string, string> = new Map(),
-  textMap: Map<string, string> = new Map()
+  textMap: Map<string, string> = new Map(),
+  batchName = 'فایل زیپ'
 ): {
   listings: CarListing[];
   sellersCount: number;
@@ -186,6 +187,7 @@ export function parseSessionJson(
   let buyersCount = 0;
   let errorsCount = 0;
   const now = Date.now();
+  const currentDateFa = new Date().toLocaleDateString('fa-IR');
 
   const rules = sessionData.normalizationRules || [];
 
@@ -193,27 +195,48 @@ export function parseSessionJson(
   if (Array.isArray(sessionData.sellers)) {
     for (let i = 0; i < sessionData.sellers.length; i++) {
       const item = sessionData.sellers[i];
-      if (item.status === 'error') {
-        errorsCount++;
-        continue;
-      }
+      if (!item) continue;
 
-      const rawCarName = (item.اسم_ماشین || item.title || '').trim();
-      if (!rawCarName && !item.imageFileName) {
+      const rawCarName = (
+        item.اسم_ماشین ||
+        item.ماشین ||
+        item.خودرو ||
+        item.مدل ||
+        item.نام_ماشین ||
+        item.عنوان ||
+        item.title ||
+        item.carName ||
+        item.model ||
+        item.name ||
+        ''
+      ).toString().trim();
+
+      if (!rawCarName && !item.imageFileName && !item.اسم_فروشنده && !item.فروشنده) {
         errorsCount++;
         continue;
       }
 
       const standardCarName = applyNormalizationRules(rawCarName || 'خودرو فروشی', rules);
-      const year = parseCarYear(item.سال_ساخت);
+      const year = parseCarYear(item.سال_ساخت || item.سال || item.year);
       const brand = detectBrand(standardCarName);
-      const sellerPhone = formatIranianPhone(item.اسم_فروشنده);
+      const sellerPhone = extractIranianPhone(
+        item.اسم_فروشنده,
+        item.فروشنده,
+        item.شماره_تماس,
+        item.تلفن,
+        item.phone,
+        item.mobile,
+        item.imageFileName,
+        item.id,
+        item.توضیحات,
+        item.توضیحات_بیشتر
+      );
 
       const attrs = extractCarAttributes(item.imageFileName || '', item.رنگ || '');
-      const rawPrice = parseNumericValue(item.قیمت_تومان);
+      const rawPrice = parseNumericValue(item.قیمت_تومان || item.قیمت || item.مبلغ || item.price);
       const priceFormatted = rawPrice > 0 ? formatTomanPrice(rawPrice) : 'توافقی';
 
-      const mileage = parseNumericValue(item.کارکرد_کیلومتر);
+      const mileage = parseNumericValue(item.کارکرد_کیلومتر || item.کارکرد || item.کیلومتر || item.mileage);
       const mileageFormatted = mileage > 0 ? `${toPersianDigits(mileage.toLocaleString('en-US'))} کیلومتر` : 'کارشناسی نشده';
 
       const title = `${standardCarName} - مدل ${toPersianDigits(year)}`;
@@ -265,6 +288,8 @@ export function parseSessionJson(
         description,
         fileDescription,
         isTextOnly,
+        importBatchName: batchName,
+        importDate: currentDateFa,
         createdAt: new Date(now - (i % 4) * 3600000 * 8).toISOString(),
         imageThumbnailBase64: imageSrc,
         imageFullBase64: imageSrc,
@@ -276,42 +301,85 @@ export function parseSessionJson(
     }
   }
 
-  // 2. Process buyers
+  // 2. Process buyers (Comprehensively parses every buyer row with complete key aliases)
   if (Array.isArray(sessionData.buyers)) {
     for (let i = 0; i < sessionData.buyers.length; i++) {
       const item = sessionData.buyers[i];
-      if (item.status === 'error') {
-        errorsCount++;
-        continue;
-      }
+      if (!item) continue;
 
-      const rawCarName = (item.اسم_ماشین || '').trim();
-      if (!rawCarName && !item.imageFileName) {
+      const rawCarName = (
+        item.اسم_ماشین ||
+        item.ماشین ||
+        item.خودرو ||
+        item.مدل ||
+        item.نام_ماشین ||
+        item.عنوان ||
+        item.title ||
+        item.carName ||
+        item.model ||
+        item.name ||
+        item.توضیحات_بیشتر ||
+        item.description ||
+        ''
+      ).toString().trim();
+
+      const customerRaw = (
+        item.اسم_مشتری ||
+        item.مشتری ||
+        item.خریدار ||
+        item.شماره_تماس ||
+        item.تلفن ||
+        item.phone ||
+        item.mobile ||
+        ''
+      ).toString().trim();
+
+      // If both car name and customer are completely blank, record error and skip
+      if (!rawCarName && !customerRaw && !item.imageFileName) {
         errorsCount++;
         continue;
       }
 
       const standardCarName = applyNormalizationRules(rawCarName || 'خودرو درخواستی', rules);
-      const year = parseCarYear(item.سال_ساخت);
+      const year = parseCarYear(item.سال_ساخت || item.سال || item.year);
       const brand = detectBrand(standardCarName);
-      const buyerPhone = formatIranianPhone(item.اسم_مشتری);
+      const buyerPhone = extractIranianPhone(
+        customerRaw,
+        item.اسم_مشتری,
+        item.مشتری,
+        item.خریدار,
+        item.شماره_تماس,
+        item.تلفن,
+        item.phone,
+        item.mobile,
+        item.imageFileName,
+        item.id,
+        item.توضیحات_بیشتر,
+        item.description
+      );
 
-      const budget = parseNumericValue(item.بودجه_تقریبی_تومان);
+      const budget = parseNumericValue(
+        item.بودجه_تقریبی_تومان || item.بودجه || item.قیمت || item.مبلغ || item.budget || item.price
+      );
       const budgetFormatted = budget > 0 ? formatTomanPrice(budget) : 'بودجه توافقی';
 
-      const title = `خریدار ${standardCarName} - مدل ${toPersianDigits(item.سال_ساخت || 'توافقی')}`;
+      const yearDisplay = item.سال_ساخت || item.سال || item.year || 'توافقی';
+      const title = `خریدار ${standardCarName} - مدل ${toPersianDigits(yearDisplay)}`;
 
       const id = item.id || `buyer-${i}`;
       const attachedText = textMap.get(id) || textMap.get(item.imageFileName || '');
       const isTextOnly = Boolean(
         attachedText ||
         item.imageFileName?.endsWith('.txt') ||
-        item.imageFileName === 'ورودی دستی'
+        item.imageFileName === 'ورودی دستی' ||
+        !imageMap.has(id)
       );
 
       const fileDescription =
         attachedText ||
         item.توضیحات_بیشتر ||
+        item.توضیحات ||
+        item.description ||
         extractCleanFileDescription(item.imageFileName, item.رنگ);
 
       let imageSrc = imageMap.get(id) || imageMap.get(item.imageFileName || '');
@@ -347,6 +415,8 @@ export function parseSessionJson(
         description,
         fileDescription,
         isTextOnly,
+        importBatchName: batchName,
+        importDate: currentDateFa,
         createdAt: new Date(now - (i % 4) * 3600000 * 6).toISOString(),
         imageThumbnailBase64: imageSrc,
         imageFullBase64: imageSrc,
@@ -365,7 +435,10 @@ export function parseSessionJson(
  * Extracts and parses a Car Exhibition ZIP archive (.zip)
  * Finds session.json and maps all media files in data/{id}
  */
-export async function parseZipArchive(file: File | Blob | ArrayBuffer | Uint8Array): Promise<{
+export async function parseZipArchive(
+  file: File | Blob | ArrayBuffer | Uint8Array,
+  customBatchName?: string
+): Promise<{
   listings: CarListing[];
   sellersCount: number;
   buyersCount: number;
@@ -375,21 +448,20 @@ export async function parseZipArchive(file: File | Blob | ArrayBuffer | Uint8Arr
   const zip = new JSZip();
   const loadedZip = await zip.loadAsync(file);
 
-  let sessionJsonFile: JSZip.JSZipObject | null = null;
   const imageMap = new Map<string, string>();
   const textMap = new Map<string, string>();
-
-  // Iterate zip entries
+  const jsonFiles: JSZip.JSZipObject[] = [];
   const fileNames = Object.keys(loadedZip.files);
+
   for (const name of fileNames) {
     const entry = loadedZip.files[name];
     if (entry.dir) continue;
 
     const baseName = name.split('/').pop() || name;
 
-    // Check for session.json
-    if (baseName.toLowerCase() === 'session.json' || (!sessionJsonFile && baseName.toLowerCase().endsWith('.json'))) {
-      sessionJsonFile = entry;
+    // Check for JSON files
+    if (baseName.toLowerCase().endsWith('.json')) {
+      jsonFiles.push(entry);
       continue;
     }
 
@@ -423,14 +495,56 @@ export async function parseZipArchive(file: File | Blob | ArrayBuffer | Uint8Arr
     }
   }
 
-  if (!sessionJsonFile) {
-    throw new Error('فایل session.json در آرشیو فشرده ZIP یافت نشد. لطفاً ساختار زیپ را بررسی فرمایید.');
+  if (jsonFiles.length === 0) {
+    throw new Error('هیچ فایل JSON یا دیتایی در آرشیو فشرده ZIP یافت نشد. لطفاً ساختار زیپ را بررسی فرمایید.');
   }
 
-  const sessionContent = await sessionJsonFile.async('string');
-  const sessionObj = JSON.parse(sessionContent);
+  // Sort so session.json is processed first if present
+  jsonFiles.sort((a, b) => {
+    const aName = a.name.split('/').pop()?.toLowerCase() || '';
+    const bName = b.name.split('/').pop()?.toLowerCase() || '';
+    if (aName === 'session.json') return -1;
+    if (bName === 'session.json') return 1;
+    return 0;
+  });
 
-  const result = parseSessionJson(sessionObj, imageMap, textMap);
+  const sessionObj: SessionJsonRoot = { sellers: [], buyers: [] };
+
+  for (const jFile of jsonFiles) {
+    try {
+      const sessionContent = await jFile.async('string');
+      const parsed = JSON.parse(sessionContent);
+
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (item.اسم_مشتری || item.مشتری || item.بودجه_تقریبی_تومان || item.type === 'buy_request') {
+            sessionObj.buyers = sessionObj.buyers || [];
+            sessionObj.buyers.push(item);
+          } else {
+            sessionObj.sellers = sessionObj.sellers || [];
+            sessionObj.sellers.push(item);
+          }
+        }
+      } else if (parsed && typeof parsed === 'object') {
+        if (Array.isArray(parsed.sellers)) {
+          sessionObj.sellers = sessionObj.sellers || [];
+          sessionObj.sellers.push(...parsed.sellers);
+        }
+        if (Array.isArray(parsed.buyers)) {
+          sessionObj.buyers = sessionObj.buyers || [];
+          sessionObj.buyers.push(...parsed.buyers);
+        }
+        if (parsed.normalizationRules) {
+          sessionObj.normalizationRules = parsed.normalizationRules;
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to parse json file from zip:', jFile.name, err);
+    }
+  }
+
+  const batchName = customBatchName || (file && 'name' in file && typeof (file as any).name === 'string' ? (file as any).name : 'بسته فایل زیپ');
+  const result = parseSessionJson(sessionObj, imageMap, textMap, batchName);
 
   return {
     ...result,
@@ -441,7 +555,7 @@ export async function parseZipArchive(file: File | Blob | ArrayBuffer | Uint8Arr
 /**
  * Parses CSV export files (sellers or buyers)
  */
-export function parseCarCsv(csvContent: string): CarListing[] {
+export function parseCarCsv(csvContent: string, customBatchName = 'فایل CSV'): CarListing[] {
   const cleaned = csvContent.replace(/^\uFEFF/, '').trim();
   const lines = cleaned.split(/\r?\n/).filter((line) => line.trim().length > 0);
   if (lines.length < 2) return [];
@@ -451,6 +565,7 @@ export function parseCarCsv(csvContent: string): CarListing[] {
 
   const listings: CarListing[] = [];
   const now = Date.now();
+  const currentDateFa = new Date().toLocaleDateString('fa-IR');
 
   for (let i = 1; i < lines.length; i++) {
     const row = lines[i].split(',').map((c) => c.trim().replace(/^"|"$/g, ''));
@@ -463,7 +578,7 @@ export function parseCarCsv(csvContent: string): CarListing[] {
       const color = row[3] || 'توافقی';
       const budget = parseNumericValue(row[4]);
       const notes = row[5] || '';
-      const phone = formatIranianPhone(customer);
+      const phone = extractIranianPhone(customer, row[0], row[5], row[1], row[3]);
 
       const listing: CarListing = {
         id: `csv-buyer-${i}`,
@@ -485,6 +600,8 @@ export function parseCarCsv(csvContent: string): CarListing[] {
         description: notes,
         fileDescription: notes,
         isTextOnly: true,
+        importBatchName: customBatchName,
+        importDate: currentDateFa,
         createdAt: new Date(now - i * 3600000).toISOString(),
         imageThumbnailBase64: createCarPlaceholder('#059669', carName, false),
         imageFullBase64: createCarPlaceholder('#059669', carName, true),
@@ -499,7 +616,7 @@ export function parseCarCsv(csvContent: string): CarListing[] {
       const price = parseNumericValue(row[5]);
       const seller = row[6] || 'فروشنده';
       const filename = row[7] || '';
-      const phone = formatIranianPhone(seller);
+      const phone = extractIranianPhone(seller, filename, row[6], row[7], row[0], row[1]);
 
       const attrs = extractCarAttributes(filename, color);
       const fileDescription = extractCleanFileDescription(filename, color, attrs.notes);
@@ -524,6 +641,8 @@ export function parseCarCsv(csvContent: string): CarListing[] {
         description: fileDescription,
         fileDescription,
         isTextOnly: filename.endsWith('.txt'),
+        importBatchName: customBatchName,
+        importDate: currentDateFa,
         createdAt: new Date(now - i * 3600000).toISOString(),
         imageThumbnailBase64: createCarPlaceholder(attrs.colorHex, carName, false),
         imageFullBase64: createCarPlaceholder(attrs.colorHex, carName, true),

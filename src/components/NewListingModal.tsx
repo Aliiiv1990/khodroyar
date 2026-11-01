@@ -230,6 +230,8 @@ export const NewListingModal: React.FC<NewListingModalProps> = ({
       fileDescription: description || `${model} مدل ${toPersianDigits(parsedYear)} به رنگ ${color}`,
       isTextOnly: false,
       source: 'user',
+      importBatchName: 'ثبت‌های دستی همکاران و مدیر',
+      importDate: new Date().toLocaleDateString('fa-IR'),
       createdAt: new Date().toISOString(),
       imageThumbnailBase64: placeholderBase64,
       imageFullBase64: placeholderBase64,

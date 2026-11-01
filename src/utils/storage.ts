@@ -136,6 +136,23 @@ export async function loadListingsFromIndexedDB(): Promise<CarListing[] | null> 
 }
 
 /**
+ * Append or merge new listings into IndexedDB without wiping existing records
+ */
+export async function appendListingsToIndexedDB(newListings: CarListing[]): Promise<CarListing[]> {
+  try {
+    const current = (await loadListingsFromIndexedDB()) || [];
+    const incomingIds = new Set(newListings.map((l) => l.id));
+    const merged = [...newListings, ...current.filter((item) => !incomingIds.has(item.id))];
+    await saveListingsToIndexedDB(merged);
+    return merged;
+  } catch (err) {
+    console.warn('IndexedDB append error:', err);
+    await saveListingsToIndexedDB(newListings);
+    return newListings;
+  }
+}
+
+/**
  * Completely clear cached listings from IndexedDB
  */
 export async function clearIndexedDBListings(): Promise<boolean> {

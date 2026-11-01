@@ -28,6 +28,9 @@ export interface CarListing {
   rowIndex?: number;
   imageFileName?: string;
   status?: string;
+  // Batch and origin tracking for admin deletion and date management
+  importBatchName?: string; // e.g. "archive_28oct.zip" or "ورودی روز شنبه"
+  importDate?: string; // e.g. "1403/08/08"
   // Normalized cached string for instant sub-millisecond filtering
   _searchIndex?: string;
 }

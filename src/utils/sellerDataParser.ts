@@ -34,20 +34,103 @@ export interface SellerJsonPayload {
 }
 
 /**
- * Normalizes Iranian phone numbers (e.g. "989122959582" -> "09122959582")
+ * Intelligently extracts and normalizes all genuine 11-digit Iranian phone numbers
+ * (all mobile operators: 0910-0919, 0930-0939, 0901-0905, 0920-0923, 0990-0999,
+ * and 11-digit exhibition/showroom landlines with city code: 021, 026, 031, 051, 071, etc.).
+ *
+ * Handles:
+ * - 11 digits starting with 0 (e.g. 09351234567, 02188776655)
+ * - 12 digits starting with 98 or +98 (e.g. 989121769442 -> 09121769442)
+ * - 10 digits without leading 0 (e.g. 9121769442 -> 09121769442)
+ * - Persian and Arabic numerals (e.g. ۰۹۳۵۱۲۳۴۵۶۷ -> 09351234567)
+ * - Embedded in filenames with underscores (e.g. 989121769442_1268_207.jpg)
  */
-export function formatIranianPhone(rawPhone?: string): string {
-  if (!rawPhone) return '09120000000';
-  let cleaned = rawPhone.toString().trim().replace(/[^\d]/g, '');
+export function extractIranianPhone(...candidates: (string | number | undefined | null)[]): string {
+  for (const raw of candidates) {
+    if (raw === undefined || raw === null) continue;
+    const rawStr = raw.toString().trim();
+    if (!rawStr) continue;
 
-  // Convert 98912... -> 0912...
-  if (cleaned.startsWith('98') && cleaned.length >= 12) {
-    cleaned = '0' + cleaned.slice(2);
-  } else if (!cleaned.startsWith('0') && cleaned.startsWith('9') && cleaned.length === 10) {
-    cleaned = '0' + cleaned;
+    // 1. Convert Persian/Arabic digits to ASCII (0-9)
+    const normalized = normalizePersianText(rawStr);
+
+    // 2. Separate punctuation/underscores/slashes with spaces so numbers aren't glued to filenames
+    const spaced = normalized.replace(/[_.\-\/\\|,;:]/g, ' ');
+
+    // Match 1: 12-digit international format starting with 98, +98, 0098 (e.g. 989121769442 or 982188776655)
+    const mIntl = spaced.match(/(?:(?:\+|00)?98)(\d{10})(?!\d)/);
+    if (mIntl && mIntl[1]) {
+      const formatted = '0' + mIntl[1];
+      if (isValidIranian11DigitNumber(formatted)) {
+        return formatted;
+      }
+    }
+
+    // Match 2: Standard 11-digit number starting with 0 (e.g. 09351234567 or 02188776655)
+    const m11 = spaced.match(/(?<!\d)(0\d{10})(?!\d)/);
+    if (m11 && m11[1]) {
+      const formatted = m11[1];
+      if (isValidIranian11DigitNumber(formatted)) {
+        return formatted;
+      }
+    }
+
+    // Match 3: 10-digit number without leading 0 (e.g. 9121769442 or 9351234567)
+    const m10 = spaced.match(/(?<!\d)(9\d{9})(?!\d)/);
+    if (m10 && m10[1]) {
+      const formatted = '0' + m10[1];
+      if (isValidIranian11DigitNumber(formatted)) {
+        return formatted;
+      }
+    }
+
+    // Match 4: Clean all non-digits and test if whole sequence is 10, 11, or 12 digits
+    const cleanedDigits = normalized.replace(/[^\d]/g, '');
+    if (cleanedDigits.startsWith('98') && cleanedDigits.length === 12) {
+      const formatted = '0' + cleanedDigits.slice(2);
+      if (isValidIranian11DigitNumber(formatted)) {
+        return formatted;
+      }
+    } else if (cleanedDigits.startsWith('0') && cleanedDigits.length === 11) {
+      if (isValidIranian11DigitNumber(cleanedDigits)) {
+        return cleanedDigits;
+      }
+    } else if (cleanedDigits.startsWith('9') && cleanedDigits.length === 10) {
+      const formatted = '0' + cleanedDigits;
+      if (isValidIranian11DigitNumber(formatted)) {
+        return formatted;
+      }
+    }
   }
 
-  return cleaned || '09120000000';
+  return 'ثبت نشده';
+}
+
+/**
+ * Validates that an 11-digit number is not a dummy repetitive placeholder
+ */
+function isValidIranian11DigitNumber(num: string): boolean {
+  if (num.length !== 11 || !num.startsWith('0')) return false;
+  // Reject dummy placeholders like 09120000000, 09000000000, 00000000000, etc.
+  if (
+    num === '09120000000' ||
+    num === '09000000000' ||
+    num === '00000000000' ||
+    /^0(\d)\1{9}$/.test(num) ||
+    /0000000/.test(num)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Normalizes Iranian phone numbers (e.g. "989122959582" -> "09122959582").
+ * Backwards compatible with single string argument.
+ */
+export function formatIranianPhone(rawPhone?: string | number): string {
+  if (!rawPhone) return 'ثبت نشده';
+  return extractIranianPhone(rawPhone);
 }
 
 /**
@@ -301,7 +384,13 @@ export function parseSellersJson(inputJson: string | object): {
     const carName = rawCarName || 'خودرو فروشی';
     const year = parseCarYear(raw.سال_ساخت || raw.year);
     const brand = detectBrand(carName);
-    const sellerPhone = formatIranianPhone(raw.اسم_فروشنده || raw.sellerPhone);
+    const sellerPhone = extractIranianPhone(
+      raw.اسم_فروشنده,
+      raw.sellerPhone,
+      raw.imageFileName,
+      raw.id,
+      raw.description
+    );
 
     const attrs = extractCarAttributes(raw.imageFileName || '', raw.رنگ || raw.color || '');
 

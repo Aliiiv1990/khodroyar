@@ -85,3 +85,62 @@ export function getListingImage(listing: Partial<CarListing>, isFull = false): s
   const modelName = listing.model || listing.title || 'خودرو';
   return generateCarSvg(colorHex, modelName, isFull);
 }
+
+/**
+ * Optimizes and downscales large base64 photos before uploading to the server.
+ * Preserves high definition and crystal-clear vehicle details (plates, stickers, body)
+ * at up to 1280x960 with quality 0.85, preventing pixelation while still avoiding giant multi-MB uploads.
+ */
+export async function optimizeImageForUpload(
+  dataUrl?: string,
+  maxWidth = 1280,
+  maxHeight = 960,
+  quality = 0.85
+): Promise<string> {
+  if (!dataUrl || dataUrl.length < 50 || dataUrl.startsWith('data:image/svg+xml')) {
+    return dataUrl || '';
+  }
+  // If already reasonably sized for the target resolution, preserve original bytes
+  if (maxWidth >= 1000 && dataUrl.length < 85000) {
+    return dataUrl;
+  }
+  if (maxWidth < 1000 && dataUrl.length < 28000) {
+    return dataUrl;
+  }
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return dataUrl;
+  }
+
+  return new Promise<string>((resolve) => {
+    try {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          let { width, height } = img;
+          if (width > maxWidth || height > maxHeight) {
+            const ratio = Math.min(maxWidth / width, maxHeight / height);
+            width = Math.max(10, Math.round(width * ratio));
+            height = Math.max(10, Math.round(height * ratio));
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(dataUrl);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressed = canvas.toDataURL('image/jpeg', quality);
+          resolve(compressed.length < dataUrl.length ? compressed : dataUrl);
+        } catch {
+          resolve(dataUrl);
+        }
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    } catch {
+      resolve(dataUrl);
+    }
+  });
+}

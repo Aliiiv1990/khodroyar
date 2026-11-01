@@ -32,26 +32,26 @@ export const CarCard: React.FC<CarCardProps> = React.memo(({
           onOpenDetails(listing);
         }
       }}
-      className={`group relative rounded-2xl transition-all duration-150 p-3 sm:p-3.5 cursor-pointer select-none active:scale-[0.99] flex flex-col justify-between ${
+      className={`group relative rounded-2xl transition-all duration-150 p-2.5 sm:p-3 cursor-pointer select-none active:scale-[0.99] flex flex-col justify-between ${
         isUserSubmitted
           ? 'bg-gradient-to-br from-indigo-50/90 via-purple-50/40 to-white border-2 border-indigo-300/90 shadow-sm hover:border-indigo-400 hover:shadow-md'
           : 'bg-white border border-slate-200/90 shadow-xs hover:shadow-md'
       }`}
     >
-      <div className="flex items-center gap-3 sm:gap-4">
-        {/* Square Thumbnail (or Text File Icon for text-only files) */}
+      <div className="flex items-center gap-2.5 sm:gap-3.5">
+        {/* Square Thumbnail (or Text File Icon for text-only files) - Enlarged to 96px */}
         {listing.isTextOnly ? (
           <div
-            className={`w-[80px] h-[80px] min-w-[80px] min-h-[80px] rounded-xl flex flex-col items-center justify-center shrink-0 shadow-xs ${
+            className={`w-[96px] h-[96px] min-w-[96px] min-h-[96px] rounded-xl flex flex-col items-center justify-center shrink-0 shadow-xs ${
               isUserSubmitted
                 ? 'bg-indigo-100/90 border border-indigo-300 text-indigo-800'
                 : 'bg-amber-50 border border-amber-200/90 text-amber-700'
             }`}
           >
             {isUserSubmitted ? (
-              <UserCheck className="w-8 h-8 text-indigo-600 stroke-[1.8]" />
+              <UserCheck className="w-9 h-9 text-indigo-600 stroke-[1.8]" />
             ) : (
-              <FileText className="w-8 h-8 text-amber-600 stroke-[1.8]" />
+              <FileText className="w-9 h-9 text-amber-600 stroke-[1.8]" />
             )}
             <span
               className={`text-[10px] font-black mt-0.5 ${
@@ -66,7 +66,7 @@ export const CarCard: React.FC<CarCardProps> = React.memo(({
             <LazyThumbnail
               base64Src={getListingImage(listing, false)}
               alt={listing.model}
-              size={80}
+              size={96}
             />
             {isUserSubmitted && (
               <span className="absolute -top-1.5 -right-1.5 bg-indigo-600 text-white p-1 rounded-full shadow-xs">
@@ -79,7 +79,7 @@ export const CarCard: React.FC<CarCardProps> = React.memo(({
         {/* Minimal Info Column */}
         <div className="flex-1 min-w-0 flex flex-col justify-center">
           {/* 1. Car Name, Year, and Source Badges */}
-          <div className="flex items-center justify-between gap-1 mb-1">
+          <div className="flex items-center justify-between gap-1 mb-0.5">
             <h3
               className={`text-base sm:text-lg font-black transition-colors line-clamp-1 ${
                 isUserSubmitted
@@ -95,9 +95,9 @@ export const CarCard: React.FC<CarCardProps> = React.memo(({
 
             <div className="flex items-center gap-1 shrink-0">
               {isUserSubmitted ? (
-                <span className="text-[10px] sm:text-[11px] font-black px-2 py-0.5 rounded-md bg-indigo-100 text-indigo-800 border border-indigo-300 flex items-center gap-0.5 shadow-2xs">
+                <span className="text-[10px] sm:text-[11px] font-black px-1.5 py-0.5 rounded-md bg-indigo-100 text-indigo-800 border border-indigo-300 flex items-center gap-0.5 shadow-2xs">
                   <UserCheck className="w-3 h-3 text-indigo-600" />
-                  <span>ثبت همکار/کاربر</span>
+                  <span>ثبت همکار</span>
                 </span>
               ) : null}
 
@@ -115,7 +115,7 @@ export const CarCard: React.FC<CarCardProps> = React.memo(({
 
           {/* 2. Filename Text / Description */}
           <div
-            className={`flex items-start gap-1 text-xs sm:text-sm font-medium line-clamp-2 leading-relaxed p-1.5 rounded-lg border ${
+            className={`flex items-start gap-1 text-xs sm:text-sm font-medium line-clamp-2 leading-relaxed p-1 sm:p-1.5 rounded-lg border ${
               isUserSubmitted
                 ? 'bg-indigo-50/70 border-indigo-100/90 text-indigo-950'
                 : 'bg-slate-50 border-slate-100 text-slate-600'
@@ -136,7 +136,7 @@ export const CarCard: React.FC<CarCardProps> = React.memo(({
           </div>
 
           {/* 3. Minimal Price & Quick Status */}
-          <div className="mt-1.5 flex items-center justify-between text-xs">
+          <div className="mt-1 flex items-center justify-between text-xs">
             <span className="font-black text-blue-700 text-sm sm:text-base">
               {listing.priceFormatted}
             </span>
@@ -148,24 +148,35 @@ export const CarCard: React.FC<CarCardProps> = React.memo(({
         </div>
       </div>
 
-      {/* Footer: Phone Call / Colleague Action */}
-      <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between">
+      {/* Footer: Streamlined & Compact Phone Section */}
+      <div className="mt-1.5 pt-1.5 border-t border-slate-100 flex items-center justify-between">
         {isUnlockedColleague ? (
           <div className="flex items-center justify-between w-full gap-2">
-            <div className="flex items-center gap-1.5 text-xs sm:text-sm font-bold text-emerald-700 dir-ltr font-mono bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
-              <ShieldCheck className="w-4 h-4 text-emerald-600" />
-              <span>{listing.phoneNumber}</span>
-            </div>
+            {listing.phoneNumber && listing.phoneNumber !== 'ثبت نشده' && !listing.phoneNumber.includes('0000000') ? (
+              <>
+                <div className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold text-emerald-700 dir-ltr font-mono bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>{listing.phoneNumber}</span>
+                </div>
 
-            <a
-              href={`tel:${listing.phoneNumber}`}
-              onClick={(e) => e.stopPropagation()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs sm:text-sm font-black shadow-sm transition-colors cursor-pointer"
-              aria-label={`تماس با شماره ${listing.phoneNumber}`}
-            >
-              <Phone className="w-3.5 h-3.5" />
-              <span>تماس مستقیم</span>
-            </a>
+                <a
+                  href={`tel:${listing.phoneNumber}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 sm:px-3 sm:py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-[11px] sm:text-xs font-black shadow-2xs transition-colors cursor-pointer"
+                  aria-label={`تماس با شماره ${listing.phoneNumber}`}
+                >
+                  <Phone className="w-3 h-3 shrink-0" />
+                  <span>تماس مستقیم</span>
+                </a>
+              </>
+            ) : (
+              <div className="flex items-center justify-between w-full">
+                <span className="text-[11px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md">
+                  شماره تماس: در فایل ثبت نشده
+                </span>
+                <span className="text-[10px] text-slate-400">تماس توافقی</span>
+              </div>
+            )}
           </div>
         ) : (
           <div className="flex items-center justify-between w-full">
@@ -175,9 +186,9 @@ export const CarCard: React.FC<CarCardProps> = React.memo(({
                 e.stopPropagation();
                 onRequestUnlock();
               }}
-              className="inline-flex items-center gap-1 text-xs font-bold text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-1 rounded-lg transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-md transition-colors cursor-pointer"
             >
-              <Lock className="w-3 h-3 text-amber-600" />
+              <Lock className="w-3 h-3 text-amber-600 shrink-0" />
               <span>شماره تماس: مخصوص همکاران</span>
               <span className="text-[10px] underline text-amber-700 mr-0.5">(ورود)</span>
             </button>

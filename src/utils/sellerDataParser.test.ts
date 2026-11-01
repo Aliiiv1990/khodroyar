@@ -3,15 +3,41 @@ import assert from 'node:assert/strict';
 import {
   parseSellersJson,
   formatIranianPhone,
+  extractIranianPhone,
   parseCarYear,
   detectBrand,
 } from './sellerDataParser';
 
-test('formatIranianPhone converts 989... to 09...', () => {
+test('formatIranianPhone converts 989... to 09... and handles Persian digits', () => {
   assert.equal(formatIranianPhone('989122959582'), '09122959582');
   assert.equal(formatIranianPhone('989121769442'), '09121769442');
   assert.equal(formatIranianPhone('09123456789'), '09123456789');
   assert.equal(formatIranianPhone('9123456789'), '09123456789');
+  assert.equal(formatIranianPhone('۰۹۱۲۲۹۵۹۵۸۲'), '09122959582');
+  assert.equal(formatIranianPhone('۹۸۹۳۵۱۲۳۴۵۶۷'), '09351234567');
+});
+
+test('extractIranianPhone searches across candidate fields and filenames for all 11-digit numbers', () => {
+  // Candidate 1 is empty, but Candidate 2 is filename starting with phone
+  assert.equal(
+    extractIranianPhone(undefined, '989121769442_1268_۲۰۷_پانا.jpg'),
+    '09121769442'
+  );
+  // Irancell (0935)
+  assert.equal(extractIranianPhone('09351234567'), '09351234567');
+  // RighTel (0921)
+  assert.equal(extractIranianPhone('989211234567'), '09211234567');
+  // Exhibition landline 021 (11 digits)
+  assert.equal(extractIranianPhone('نمایشگاه تهران 02188776655'), '02188776655');
+  // Exhibition landline 026 Karaj (11 digits)
+  assert.equal(extractIranianPhone('02634455667'), '02634455667');
+  // Persian digits in text note
+  assert.equal(
+    extractIranianPhone('', 'تماس: ۰۹۳۵۱۲۳۴۵۶۷ آقای رضایی'),
+    '09351234567'
+  );
+  // No phone in any field
+  assert.equal(extractIranianPhone(undefined, 'فایل بدون شماره.jpg'), 'ثبت نشده');
 });
 
 test('parseCarYear normalizes Persian, 2-digit and AD years', () => {

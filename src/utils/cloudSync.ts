@@ -69,6 +69,10 @@ export function subscribeToUserListings(
  * Save a newly added car listing by a user/colleague to the cloud
  */
 export async function addListingToCloud(listing: CarListing): Promise<void> {
+  // If running on Liara in Iran, skip Firebase Firestore
+  if (typeof window !== 'undefined' && (window.location.hostname.includes('liara.run') || window.location.hostname.includes('liara.ir'))) {
+    return;
+  }
   const sanitizedId = listing.id.replace(/[^a-zA-Z0-9_-]/g, '_');
   const targetDoc = doc(db, USER_LISTINGS_COLLECTION, sanitizedId);
   const payload: any = {
