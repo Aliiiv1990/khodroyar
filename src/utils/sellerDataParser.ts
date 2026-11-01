@@ -145,8 +145,12 @@ export function extractFilenameDescription(fileName?: string, fallbackText = '')
   if (!fileName || fileName === 'ورودی دستی') return fallbackText.trim();
   const baseName = fileName.split(/[\\/]/).pop() || fileName;
   let caption = baseName.replace(/\.[a-zA-Z0-9]+$/i, '');
-  caption = caption.replace(/^\d+_\d{4}(?:_|$)/, '');
-  caption = caption.replace(/^\d+_/, '');
+  const hasPhoneAndFourDigitCode = /^\d+_\d{4}(?:_|$)/.test(caption);
+  if (hasPhoneAndFourDigitCode) {
+    caption = caption.replace(/^\d+_\d{4}(?:_|$)/, '');
+  } else {
+    caption = caption.replace(/^\d+_\d+_/, '').replace(/^\d+_/, '');
+  }
   caption = caption.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
   return caption || fallbackText.trim();
 }
