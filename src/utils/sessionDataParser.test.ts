@@ -120,6 +120,7 @@ test('filename metadata is separated from image caption and attached text wins f
         imageFileName: '989121952420_6815.jpg',
         status: 'success',
         اسم_ماشین: 'پژو ۲۰۷',
+        رنگ: 'سفید',
       },
       {
         id: 'text-ad',
