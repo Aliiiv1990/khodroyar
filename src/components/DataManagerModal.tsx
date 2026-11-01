@@ -740,7 +740,7 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
         setImportStatus(
           `آرشیو زیپ (${file.name}) اضافه شد: ${toPersianDigits(result.sellersCount)} خودرو فروشی، ${toPersianDigits(
             result.buyersCount
-          )} سفارش خرید آماده انتشار در لیارا هستند (فایل‌های قبلی حفظ شدند). \${toPersianDigits(result.recoveredErrorRowsCount)} رکورد دارای وضعیت خطا از روی اطلاعات فایل بازیابی شد؛ \${toPersianDigits(result.errorsCount)} رکورد غیرقابل‌بازیابی کنار گذاشته شد. \${toPersianDigits(result.extractedImagesCount)} فایل تصویری و \${toPersianDigits(result.extractedTextFilesCount)} فایل متنی استخراج شد.`
+          )} سفارش خرید آماده انتشار در لیارا هستند (فایل‌های قبلی حفظ شدند). ${toPersianDigits(result.recoveredErrorRowsCount)} رکورد دارای وضعیت خطا از روی اطلاعات فایل بازیابی شد؛ ${toPersianDigits(result.errorsCount)} رکورد غیرقابل‌بازیابی کنار گذاشته شد. ${toPersianDigits(result.extractedImagesCount)} فایل تصویری و ${toPersianDigits(result.extractedTextFilesCount)} فایل متنی استخراج شد.`
         );
         setIsSuccess(true);
         setActiveTab('liara');
