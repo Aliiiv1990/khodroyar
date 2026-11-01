@@ -208,6 +208,8 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
     errorsCount?: number;
     extractedImagesCount?: number;
     extractedTextFilesCount?: number;
+    orphanMediaFilesCount?: number;
+    orphanMediaFileNames?: string[];
   } | null>(null);
   const [publishingBatchName, setPublishingBatchName] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -735,12 +737,18 @@ export const DataManagerModal: React.FC<DataManagerModalProps> = ({
           errorsCount: result.errorsCount,
           extractedImagesCount: result.extractedImagesCount,
           extractedTextFilesCount: result.extractedTextFilesCount,
+          orphanMediaFilesCount: result.orphanMediaFilesCount,
+          orphanMediaFileNames: result.orphanMediaFileNames,
         });
+
+        const orphanFileSummary = result.orphanMediaFilesCount > 0
+          ? ` (نمونه: ${result.orphanMediaFileNames.slice(0, 5).join('، ')})`
+          : '';
 
         setImportStatus(
           `آرشیو زیپ (${file.name}) اضافه شد: ${toPersianDigits(result.sellersCount)} خودرو فروشی، ${toPersianDigits(
             result.buyersCount
-          )} سفارش خرید آماده انتشار در لیارا هستند (فایل‌های قبلی حفظ شدند). ${toPersianDigits(result.retainedErrorRowsCount)} ردیف دارای وضعیت خطا و اطلاعات منبع نگه داشته شد؛ ${toPersianDigits(result.errorsCount)} رکورد غیرقابل‌بازیابی کنار گذاشته شد. ${toPersianDigits(result.extractedImagesCount)} فایل تصویری و ${toPersianDigits(result.extractedTextFilesCount)} فایل متنی استخراج شد.`
+          )} سفارش خرید آماده انتشار در لیارا هستند (فایل‌های قبلی حفظ شدند). ${toPersianDigits(result.retainedErrorRowsCount)} ردیف دارای وضعیت خطا و اطلاعات منبع نگه داشته شد؛ ${toPersianDigits(result.errorsCount)} رکورد غیرقابل‌بازیابی کنار گذاشته شد. ${toPersianDigits(result.extractedImagesCount)} فایل تصویری و ${toPersianDigits(result.extractedTextFilesCount)} فایل متنی استخراج شد. ${toPersianDigits(result.orphanMediaFilesCount)} فایل رسانه‌ای بدون رکورد متناظر در session.json پیدا شد${orphanFileSummary}.`
         );
         setIsSuccess(true);
         setActiveTab('liara');
