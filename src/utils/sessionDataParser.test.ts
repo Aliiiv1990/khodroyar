@@ -105,6 +105,47 @@ test('parseSessionJson parses both sellers and buyers correctly', () => {
   assert.ok(buyerListing.description.includes('خریدار فوری'));
 });
 
+test('filename metadata is separated from image caption and attached text wins for TXT ads', () => {
+  const { listings } = parseSessionJson({
+    sellers: [
+      {
+        id: 'image-ad',
+        imageFileName: '989121447370_9842_95_کمکار_۲_لکه_بین_در_و_گلگیر.jpg',
+        status: 'success',
+        اسم_ماشین: 'سراتو',
+      },
+      {
+        id: 'text-ad',
+        imageFileName: '989125937707_5614.txt',
+        status: 'success',
+        اسم_ماشین: 'دنا',
+      },
+      {
+        id: 'recoverable-error',
+        imageFileName: '989121085083_1175.txt',
+        status: 'error',
+      },
+    ],
+  }, new Map(), new Map([
+    ['989125937707_5614', 'متن کامل آگهی از فایل تکست'],
+    ['989125937707_5614.txt', 'متن کامل آگهی از فایل تکست'],
+  ]));
+
+  const imageAd = listings.find((item) => item.id === 'image-ad')!;
+  assert.equal(imageAd.phoneNumber, '09121447370');
+  assert.equal(imageAd.fileDescription, '95 کمکار ۲ لکه بین در و گلگیر');
+  assert.equal(imageAd.description, imageAd.fileDescription);
+
+  const textAd = listings.find((item) => item.id === 'text-ad')!;
+  assert.equal(textAd.phoneNumber, '09125937707');
+  assert.equal(textAd.fileDescription, 'متن کامل آگهی از فایل تکست');
+  assert.equal(textAd.isTextOnly, true);
+
+  const recoverable = listings.find((item) => item.id === 'recoverable-error')!;
+  assert.ok(recoverable);
+  assert.equal(recoverable.phoneNumber, '09121085083');
+});
+
 test('parseZipArchive extracts session.json and maps data/{id} images', async () => {
   const zip = new JSZip();
 
