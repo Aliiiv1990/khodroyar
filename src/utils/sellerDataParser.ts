@@ -345,7 +345,7 @@ export function detectBrand(carName: string): string {
 export function parseSellersJson(inputJson: string | object): {
   listings: CarListing[];
   errorsCount: number;
-  recoveredErrorRowsCount: number;
+  retainedErrorRowsCount: number;
 } {
   let data: any = inputJson;
   if (typeof inputJson === 'string') {
@@ -375,7 +375,7 @@ export function parseSellersJson(inputJson: string | object): {
 
   const listings: CarListing[] = [];
   let errorsCount = 0;
-  let recoveredErrorRowsCount = 0;
+  let retainedErrorRowsCount = 0;
   const now = Date.now();
 
   for (let i = 0; i < rawList.length; i++) {
@@ -390,7 +390,7 @@ export function parseSellersJson(inputJson: string | object): {
         errorsCount++;
         continue;
       }
-      recoveredErrorRowsCount++;
+      retainedErrorRowsCount++;
     }
 
     const rawCarName = (raw.اسم_ماشین || raw.title || raw.carName || '').trim();
@@ -472,5 +472,5 @@ export function parseSellersJson(inputJson: string | object): {
     listings.push(listing);
   }
 
-  return { listings, errorsCount, recoveredErrorRowsCount };
+  return { listings, errorsCount, retainedErrorRowsCount };
 }
