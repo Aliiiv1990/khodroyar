@@ -481,6 +481,7 @@ export async function parseZipArchive(
   const imageMap = new Map<string, string>();
   const textMap = new Map<string, string>();
   const jsonFiles: JSZip.JSZipObject[] = [];
+  const extensionlessDataEntries: JSZip.JSZipObject[] = [];
   let extractedImagesCount = 0;
   let extractedTextFilesCount = 0;
   const fileNames = Object.keys(loadedZip.files);
@@ -512,8 +513,18 @@ export async function parseZipArchive(
       continue;
     }
 
-    // Check for media in data/ or matching image extensions
-    if (name.startsWith('data/') || /\.(jpg|jpeg|png|webp|svg)$/i.test(baseName)) {
+    // Keep extensionless data/{id} entries until session.json tells us whether
+    // each one is an image or the attached text body of a TXT-only listing.
+    const normalizedZipPath = name.replace(/\\/g, '/');
+    const isDataPath = normalizedZipPath.split('/').includes('data');
+    const hasFileExtension = /\.[^/.]+$/.test(baseName);
+    if (isDataPath && !hasFileExtension) {
+      extensionlessDataEntries.push(entry);
+      continue;
+    }
+
+    // Extract only recognized image formats; do not treat every file in data/ as an image.
+    if (/\.(jpg|jpeg|png|webp|svg)$/i.test(baseName)) {
       try {
         const ext = baseName.split('.').pop()?.toLowerCase() || 'jpg';
         const mimeType = ext === 'png' ? 'image/png' : ext === 'svg' ? 'image/svg+xml' : 'image/jpeg';
@@ -574,6 +585,33 @@ export async function parseZipArchive(
       }
     } catch (err) {
       console.warn('Failed to parse json file from zip:', jFile.name, err);
+    }
+  }
+
+  // Resolve extensionless data/{id} payloads using the source record type.
+  // TXT-only records may store their text body under data/{id} without a .txt extension.
+  const textOnlyRecordIds = new Set(
+    [...(sessionObj.sellers || []), ...(sessionObj.buyers || [])]
+      .filter((item) => item.imageFileName?.toLowerCase().endsWith('.txt'))
+      .map((item) => item.id)
+      .filter((id): id is string => Boolean(id))
+  );
+
+  for (const entry of extensionlessDataEntries) {
+    const baseName = entry.name.replace(/\\/g, '/').split('/').pop() || entry.name;
+    try {
+      if (textOnlyRecordIds.has(baseName)) {
+        const textContent = await entry.async('string');
+        textMap.set(baseName, textContent);
+        extractedTextFilesCount++;
+      } else {
+        const base64 = await entry.async('base64');
+        const dataUrl = `data:image/jpeg;base64,${base64}`;
+        imageMap.set(baseName, dataUrl);
+        extractedImagesCount++;
+      }
+    } catch (err) {
+      console.warn('Failed to extract extensionless data entry from zip:', entry.name, err);
     }
   }
 
