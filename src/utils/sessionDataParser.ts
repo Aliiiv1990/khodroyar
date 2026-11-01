@@ -476,6 +476,8 @@ export async function parseZipArchive(
   extractedImagesCount: number;
   extractedTextFilesCount: number;
   retainedErrorRowsCount: number;
+  orphanMediaFilesCount: number;
+  orphanMediaFileNames: string[];
 }> {
   const zip = new JSZip();
   const loadedZip = await zip.loadAsync(file);
@@ -484,6 +486,7 @@ export async function parseZipArchive(
   const textMap = new Map<string, string>();
   const jsonFiles: JSZip.JSZipObject[] = [];
   const extensionlessDataEntries: JSZip.JSZipObject[] = [];
+  const archiveMediaFileNames: string[] = [];
   let extractedImagesCount = 0;
   let extractedTextFilesCount = 0;
   const fileNames = Object.keys(loadedZip.files);
@@ -509,6 +512,7 @@ export async function parseZipArchive(
         textMap.set(idWithoutExt, textContent);
         textMap.set(baseName, textContent);
         extractedTextFilesCount++;
+        archiveMediaFileNames.push(name);
       } catch (err) {
         console.warn('Failed to extract text entry from zip:', name, err);
       }
@@ -536,6 +540,7 @@ export async function parseZipArchive(
         imageMap.set(idWithoutExt, dataUrl);
         imageMap.set(baseName, dataUrl);
         extractedImagesCount++;
+        archiveMediaFileNames.push(name);
       } catch (err) {
         console.warn('Failed to extract image entry from zip:', name, err);
       }
@@ -614,10 +619,33 @@ export async function parseZipArchive(
         imageMap.set(baseName, dataUrl);
         extractedImagesCount++;
       }
+      archiveMediaFileNames.push(entry.name);
     } catch (err) {
       console.warn('Failed to extract extensionless data entry from zip:', entry.name, err);
     }
   }
+
+  // Detect media files that have no matching seller/buyer record in session.json.
+  const referencedSourceKeys = new Set<string>();
+  const addSourceReference = (sourceName?: string) => {
+    if (!sourceName) return;
+    const normalized = sourceName.replace(/\\/g, '/');
+    const baseName = normalized.split('/').pop() || normalized;
+    const stem = baseName.replace(/\.[^/.]+$/, '');
+    if (baseName) referencedSourceKeys.add(baseName);
+    if (stem) referencedSourceKeys.add(stem);
+  };
+
+  for (const item of [...(sessionObj.sellers || []), ...(sessionObj.buyers || [])]) {
+    if (item.id) referencedSourceKeys.add(item.id);
+    addSourceReference(item.imageFileName);
+  }
+
+  const orphanMediaFileNames = archiveMediaFileNames.filter((filePath) => {
+    const baseName = filePath.replace(/\\/g, '/').split('/').pop() || filePath;
+    const stem = baseName.replace(/\.[^/.]+$/, '');
+    return !referencedSourceKeys.has(baseName) && !referencedSourceKeys.has(stem);
+  });
 
   const batchName = customBatchName || (file && 'name' in file && typeof (file as any).name === 'string' ? (file as any).name : 'بسته فایل زیپ');
   const result = parseSessionJson(sessionObj, imageMap, textMap, batchName);
@@ -627,6 +655,8 @@ export async function parseZipArchive(
     extractedImagesCount,
     extractedTextFilesCount,
     retainedErrorRowsCount: result.retainedErrorRowsCount,
+    orphanMediaFilesCount: orphanMediaFileNames.length,
+    orphanMediaFileNames: orphanMediaFileNames.slice(0, 20),
   };
 }
 
