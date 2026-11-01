@@ -345,6 +345,7 @@ export function detectBrand(carName: string): string {
 export function parseSellersJson(inputJson: string | object): {
   listings: CarListing[];
   errorsCount: number;
+  recoveredErrorRowsCount: number;
 } {
   let data: any = inputJson;
   if (typeof inputJson === 'string') {
@@ -374,15 +375,22 @@ export function parseSellersJson(inputJson: string | object): {
 
   const listings: CarListing[] = [];
   let errorsCount = 0;
+  let recoveredErrorRowsCount = 0;
   const now = Date.now();
 
   for (let i = 0; i < rawList.length; i++) {
     const raw = rawList[i];
 
-    // Keep recoverable rows even if an earlier enrichment step marked them as error.
-    if (raw.status === 'error' && !raw.imageFileName && !raw.اسم_فروشنده && !raw.sellerPhone) {
-      errorsCount++;
-      continue;
+    // Preserve error-marked rows when source identity remains available.
+    if (raw.status === 'error') {
+      const hasSourceIdentity = Boolean(
+        raw.imageFileName || raw.اسم_فروشنده || raw.sellerPhone || raw.phone || raw.mobile
+      );
+      if (!hasSourceIdentity) {
+        errorsCount++;
+        continue;
+      }
+      recoveredErrorRowsCount++;
     }
 
     const rawCarName = (raw.اسم_ماشین || raw.title || raw.carName || '').trim();
@@ -464,5 +472,5 @@ export function parseSellersJson(inputJson: string | object): {
     listings.push(listing);
   }
 
-  return { listings, errorsCount };
+  return { listings, errorsCount, recoveredErrorRowsCount };
 }
