@@ -173,6 +173,12 @@ test('parseZipArchive extracts session.json and maps data/{id} images', async ()
         اسم_فروشنده: '989123334455',
         قیمت_تومان: '۶۰۰,۰۰۰,۰۰۰',
       },
+      {
+        id: 'text-record-id',
+        imageFileName: '989125937707_5614.txt',
+        status: 'success',
+        اسم_ماشین: 'دنا',
+      },
     ],
   };
 
@@ -180,15 +186,19 @@ test('parseZipArchive extracts session.json and maps data/{id} images', async ()
   // Add a fake jpeg in data/{id}
   zip.file('data/550e8400-e29b-41d4-a716-446655440000', 'fake-image-bytes');
   zip.file('data/another-image.jpg', 'fake-jpeg-bytes');
+  zip.file('data/text-record-id', 'متن کامل آگهی از مسیر data/id');
   zip.file('989121234567_1234.txt', 'متن آزمایشی آگهی');
 
   const zipBuffer = await zip.generateAsync({ type: 'uint8array' });
   const result = await parseZipArchive(zipBuffer);
 
-  assert.equal(result.sellersCount, 1);
-  assert.equal(result.listings.length, 1);
+  assert.equal(result.sellersCount, 2);
+  assert.equal(result.listings.length, 2);
   assert.equal(result.extractedImagesCount, 2);
-  assert.equal(result.extractedTextFilesCount, 1);
+  assert.equal(result.extractedTextFilesCount, 2);
+  const textListing = result.listings.find((listing) => listing.id === 'text-record-id')!;
+  assert.equal(textListing.isTextOnly, true);
+  assert.equal(textListing.description, 'متن کامل آگهی از مسیر data/id');
   assert.equal(result.retainedErrorRowsCount, 0);
   assert.ok(result.listings[0].imageFullBase64.startsWith('data:image/jpeg;base64,'));
 });
