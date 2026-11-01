@@ -6,7 +6,16 @@ import {
   extractIranianPhone,
   parseCarYear,
   detectBrand,
+  extractFilenameCode,
+  extractFilenameDescription,
 } from './sellerDataParser';
+
+
+test('keeps the full filename caption including numbers and preserves the four-digit code separately', () => {
+  const fileName = '989121769442_1268_۲۰۷_پانا_۹۵_بدون_رنگ.jpg';
+  assert.equal(extractFilenameCode(fileName), '1268');
+  assert.equal(extractFilenameDescription(fileName), '۲۰۷ پانا ۹۵ بدون رنگ');
+});
 
 test('formatIranianPhone converts 989... to 09... and handles Persian digits', () => {
   assert.equal(formatIranianPhone('989122959582'), '09122959582');
