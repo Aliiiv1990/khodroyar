@@ -82,9 +82,10 @@ test('parseSessionJson parses both sellers and buyers correctly', () => {
     ],
   };
 
-  const { listings, sellersCount, buyersCount, errorsCount } = parseSessionJson(sessionData);
+  const { listings, sellersCount, buyersCount, errorsCount, recoveredErrorRowsCount } = parseSessionJson(sessionData);
 
   assert.equal(errorsCount, 1);
+  assert.equal(recoveredErrorRowsCount, 0);
   assert.equal(sellersCount, 1);
   assert.equal(buyersCount, 1);
   assert.equal(listings.length, 2);
@@ -106,13 +107,19 @@ test('parseSessionJson parses both sellers and buyers correctly', () => {
 });
 
 test('filename metadata is separated from image caption and attached text wins for TXT ads', () => {
-  const { listings } = parseSessionJson({
+  const { listings, recoveredErrorRowsCount } = parseSessionJson({
     sellers: [
       {
         id: 'image-ad',
         imageFileName: '989121447370_9842_95_کمکار_۲_لکه_بین_در_و_گلگیر.jpg',
         status: 'success',
         اسم_ماشین: 'سراتو',
+      },
+      {
+        id: 'image-no-caption',
+        imageFileName: '989121952420_6815.jpg',
+        status: 'success',
+        اسم_ماشین: 'پژو ۲۰۷',
       },
       {
         id: 'text-ad',
@@ -136,6 +143,11 @@ test('filename metadata is separated from image caption and attached text wins f
   assert.equal(imageAd.fileDescription, '95 کمکار ۲ لکه بین در و گلگیر');
   assert.equal(imageAd.description, imageAd.fileDescription);
 
+  const noCaptionAd = listings.find((item) => item.id === 'image-no-caption')!;
+  assert.equal(noCaptionAd.phoneNumber, '09121952420');
+  assert.equal(noCaptionAd.fileDescription, '');
+  assert.equal(noCaptionAd.description, '');
+
   const textAd = listings.find((item) => item.id === 'text-ad')!;
   assert.equal(textAd.phoneNumber, '09125937707');
   assert.equal(textAd.fileDescription, 'متن کامل آگهی از فایل تکست');
@@ -144,6 +156,7 @@ test('filename metadata is separated from image caption and attached text wins f
   const recoverable = listings.find((item) => item.id === 'recoverable-error')!;
   assert.ok(recoverable);
   assert.equal(recoverable.phoneNumber, '09121085083');
+  assert.equal(recoveredErrorRowsCount, 1);
 });
 
 test('parseZipArchive extracts session.json and maps data/{id} images', async () => {
@@ -166,13 +179,17 @@ test('parseZipArchive extracts session.json and maps data/{id} images', async ()
   zip.file('session.json', JSON.stringify(sessionJson));
   // Add a fake jpeg in data/{id}
   zip.file('data/550e8400-e29b-41d4-a716-446655440000', 'fake-image-bytes');
+  zip.file('data/another-image.jpg', 'fake-jpeg-bytes');
+  zip.file('989121234567_1234.txt', 'متن آزمایشی آگهی');
 
   const zipBuffer = await zip.generateAsync({ type: 'uint8array' });
   const result = await parseZipArchive(zipBuffer);
 
   assert.equal(result.sellersCount, 1);
   assert.equal(result.listings.length, 1);
-  assert.equal(result.extractedImagesCount, 1);
+  assert.equal(result.extractedImagesCount, 2);
+  assert.equal(result.extractedTextFilesCount, 1);
+  assert.equal(result.recoveredErrorRowsCount, 0);
   assert.ok(result.listings[0].imageFullBase64.startsWith('data:image/jpeg;base64,'));
 });
 
