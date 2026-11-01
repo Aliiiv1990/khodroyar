@@ -84,10 +84,11 @@ export function extractCleanFileDescription(
   cleaned = cleaned.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
 
   if (/^\d+$/.test(cleaned)) {
-    return rawColor?.trim() || fileName;
+    return rawColor?.trim() || '';
   }
 
-  return cleaned || fileName;
+  // A filename containing only phone + random code has no caption; never expose metadata.
+  return cleaned || rawColor?.trim() || '';
 }
 
 /**
@@ -184,11 +185,13 @@ export function parseSessionJson(
   sellersCount: number;
   buyersCount: number;
   errorsCount: number;
+  recoveredErrorRowsCount: number;
 } {
   const listings: CarListing[] = [];
   let sellersCount = 0;
   let buyersCount = 0;
   let errorsCount = 0;
+  let recoveredErrorRowsCount = 0;
   const now = Date.now();
   const currentDateFa = new Date().toLocaleDateString('fa-IR');
 
@@ -200,11 +203,18 @@ export function parseSessionJson(
       const item = sessionData.sellers[i];
       if (!item) continue;
 
-      // Preserve rows previously marked as failed when their filename still
-      // contains the source phone and enough metadata to create a searchable ad.
-      if (item.status === 'error' && !item.imageFileName && !item.اسم_فروشنده && !item.شماره_تماس) {
-        errorsCount++;
-        continue;
+      // Preserve error-marked source rows when any source identity is still available.
+      // Keep a separate counter so recovered rows are not confused with clean rows.
+      if (item.status === 'error') {
+        const hasSourceIdentity = Boolean(
+          item.imageFileName || item.اسم_فروشنده || item.فروشنده ||
+          item.شماره_تماس || item.تلفن || item.phone || item.mobile
+        );
+        if (!hasSourceIdentity) {
+          errorsCount++;
+          continue;
+        }
+        recoveredErrorRowsCount++;
       }
 
       const rawCarName = (
@@ -221,7 +231,8 @@ export function parseSessionJson(
         ''
       ).toString().trim();
 
-      if (!rawCarName && !item.imageFileName && !item.اسم_فروشنده && !item.فروشنده) {
+      if (!rawCarName && !item.imageFileName && !item.اسم_فروشنده && !item.فروشنده &&
+          !item.شماره_تماس && !item.تلفن && !item.phone && !item.mobile) {
         errorsCount++;
         continue;
       }
@@ -259,7 +270,7 @@ export function parseSessionJson(
         textMap.get((item.imageFileName || '').replace(/\.[^/.]+$/, ''));
       const isTextOnly = Boolean(
         attachedText ||
-        item.imageFileName?.endsWith('.txt') ||
+        item.imageFileName?.toLowerCase().endsWith('.txt') ||
         item.imageFileName === 'ورودی دستی'
       );
 
@@ -445,7 +456,7 @@ export function parseSessionJson(
     }
   }
 
-  return { listings, sellersCount, buyersCount, errorsCount };
+  return { listings, sellersCount, buyersCount, errorsCount, recoveredErrorRowsCount };
 }
 
 /**
@@ -461,6 +472,8 @@ export async function parseZipArchive(
   buyersCount: number;
   errorsCount: number;
   extractedImagesCount: number;
+  extractedTextFilesCount: number;
+  recoveredErrorRowsCount: number;
 }> {
   const zip = new JSZip();
   const loadedZip = await zip.loadAsync(file);
@@ -468,6 +481,8 @@ export async function parseZipArchive(
   const imageMap = new Map<string, string>();
   const textMap = new Map<string, string>();
   const jsonFiles: JSZip.JSZipObject[] = [];
+  let extractedImagesCount = 0;
+  let extractedTextFilesCount = 0;
   const fileNames = Object.keys(loadedZip.files);
 
   for (const name of fileNames) {
@@ -490,6 +505,7 @@ export async function parseZipArchive(
         const textContent = await entry.async('string');
         textMap.set(idWithoutExt, textContent);
         textMap.set(baseName, textContent);
+        extractedTextFilesCount++;
       } catch (err) {
         console.warn('Failed to extract text entry from zip:', name, err);
       }
@@ -506,6 +522,7 @@ export async function parseZipArchive(
 
         imageMap.set(idWithoutExt, dataUrl);
         imageMap.set(baseName, dataUrl);
+        extractedImagesCount++;
       } catch (err) {
         console.warn('Failed to extract image entry from zip:', name, err);
       }
@@ -565,7 +582,9 @@ export async function parseZipArchive(
 
   return {
     ...result,
-    extractedImagesCount: imageMap.size,
+    extractedImagesCount,
+    extractedTextFilesCount,
+    recoveredErrorRowsCount: result.recoveredErrorRowsCount,
   };
 }
 
