@@ -19,6 +19,13 @@ export interface RawSellerItem {
   year?: string | number;
   color?: string;
   sellerPhone?: string;
+  phone?: string;
+  mobile?: string;
+  فروشنده?: string;
+  شماره_تماس?: string;
+  تلفن?: string;
+  توضیحات?: string;
+  توضیحات_بیشتر?: string;
   price?: number;
   priceFormatted?: string;
   description?: string;
